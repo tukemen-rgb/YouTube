@@ -49,6 +49,19 @@ class JobLifecycle(unittest.TestCase):
         self.job.mark_done("publish")
         self.assertEqual(self.job.stage_status("publish"), "done")
 
+    def test_assembly_rejects_stale_video(self):
+        # 動画を作った後に timeline.json を書き換えたら、その動画は
+        # もう「今の記述の成果物」ではないので完了にできない。
+        out = self.dir / "out"
+        out.mkdir()
+        (self.dir / "timeline.json").write_text("{}", encoding="utf-8")
+        (out / "video.mp4").write_bytes(b"fake")
+        (out / "render_manifest.json").write_text(
+            json.dumps({"timeline_sha256": "0" * 64}), encoding="utf-8"
+        )
+        with self.assertRaises(JobError):
+            self.job.mark_done("assembly")
+
     def test_load_rejects_tampered_stages(self):
         data = json.loads((self.dir / "job.json").read_text(encoding="utf-8"))
         del data["stages"]["publish"]

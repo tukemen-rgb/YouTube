@@ -19,6 +19,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,8 +57,52 @@ def _escape_filter_value(value: str) -> str:
     return "".join(out)
 
 
+def _char_em(ch: str) -> float:
+    # 全角(日本語など)は 1 文字 ≈ 1em、半角は ≈ 0.55em として幅を見積もる。
+    return 1.0 if unicodedata.east_asian_width(ch) in ("W", "F", "A") else 0.55
+
+
+def wrap_text(text: str, font_size: int, frame_width: int) -> str:
+    """画面幅に収まるよう文字を折り返す。
+
+    drawtext は自動折り返しをしない(実測: 長文は左右にはみ出して
+    読めない動画が出る)ので、レンダリング側で改行を入れる。日本語は
+    分かち書きがないため、幅の見積もりで文字単位に折る。
+    """
+    usable_em = (frame_width * 0.9) / font_size
+    wrapped_lines: list[str] = []
+    for line in text.split("\n"):
+        current = ""
+        current_em = 0.0
+        for ch in line:
+            em = _char_em(ch)
+            if current and current_em + em > usable_em:
+                wrapped_lines.append(current)
+                current = ch
+                current_em = em
+            else:
+                current += ch
+                current_em += em
+        wrapped_lines.append(current)
+    return "\n".join(wrapped_lines)
+
+
+def check_vertical_fit(wrapped: str, font_size: int, frame_height: int) -> None:
+    """折り返し後の行数が画面の高さに収まらなければ断る(fail-closed)。
+
+    黙って下がはみ出た動画を出すより、その場で「文字が多すぎる」と
+    言うほうが直せる。"""
+    line_height = font_size + font_size // 4
+    lines = wrapped.count("\n") + 1
+    if lines * line_height > frame_height * 0.92:
+        raise RenderError(
+            f"文字が多すぎて画面に収まらない({lines} 行)。"
+            "文字を減らすか font_size を小さくすること。"
+        )
+
+
 def write_text_files(timeline: Timeline, text_dir: Path) -> list[Path]:
-    """シーンの文字を 1 ファイルずつに書く。
+    """シーンの文字を折り返してから 1 ファイルずつに書く。
 
     drawtext には文字列を直接渡さずファイル参照(textfile=)で渡す。
     本文にどんな記号や改行があってもフィルタ文法に混ざらないため、
@@ -66,8 +111,10 @@ def write_text_files(timeline: Timeline, text_dir: Path) -> list[Path]:
     text_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for index, scene in enumerate(timeline.scenes):
+        wrapped = wrap_text(scene.text, scene.font_size, timeline.width)
+        check_vertical_fit(wrapped, scene.font_size, timeline.height)
         path = text_dir / f"scene_{index:03d}.txt"
-        path.write_text(scene.text, encoding="utf-8")
+        path.write_text(wrapped, encoding="utf-8")
         paths.append(path)
     return paths
 
@@ -94,9 +141,18 @@ def build_command(
 
     filters = []
     for index, (scene, text_path) in enumerate(zip(timeline.scenes, text_paths)):
+        if scene.text == "":
+            # 無地の間(ポーズ)。drawtext は空ファイルを嫌うので通さない。
+            filters.append(f"[{index}:v]null[v{index}]")
+            continue
         drawtext = (
             f"drawtext=fontfile={_escape_filter_value(str(font_path))}"
             f":textfile={_escape_filter_value(str(text_path))}"
+            # expansion=none: 本文中の %{...} を drawtext の命令として展開
+            # しない。展開を許すと本文の記号次第で描画が壊れる(実測:
+            # %{eval:...} 入りの本文で文字が全部消えた)し、外部由来の
+            # テキストに描画エンジンへの命令を書けてしまう。
+            ":expansion=none"
             f":fontcolor={_hex_color(scene.text_color)}"
             f":fontsize={scene.font_size}"
             f":line_spacing={scene.font_size // 4}"

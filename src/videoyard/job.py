@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,6 +116,23 @@ class ProductionJob:
             for required in ("out/video.mp4", "out/render_manifest.json"):
                 if not (self.directory / required).is_file():
                     raise JobError(f"assembly の成果物がない: {required}")
+            # 動画が「今の」timeline.json から作られたものであること。
+            # レンダリング後に timeline を書き換えた古い動画を完了と
+            # 記録できてしまう穴を塞ぐ。
+            try:
+                manifest = json.loads(
+                    (self.directory / "out/render_manifest.json").read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                raise JobError(f"render_manifest.json が読めない: {exc}")
+            current = hashlib.sha256(
+                (self.directory / "timeline.json").read_bytes()
+            ).hexdigest()
+            if manifest.get("timeline_sha256") != current:
+                raise JobError(
+                    "out/video.mp4 は今の timeline.json から作られたものではない。"
+                    "render し直すこと。"
+                )
         if stage == "publish":
             if not (self.directory / "approval.json").is_file():
                 raise ApprovalRequired(
