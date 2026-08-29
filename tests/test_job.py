@@ -57,7 +57,8 @@ class JobLifecycle(unittest.TestCase):
         (self.dir / "timeline.json").write_text("{}", encoding="utf-8")
         (out / "video.mp4").write_bytes(b"fake")
         (out / "render_manifest.json").write_text(
-            json.dumps({"timeline_sha256": "0" * 64}), encoding="utf-8"
+            json.dumps({"plan_file": "timeline.json", "plan_sha256": "0" * 64}),
+            encoding="utf-8",
         )
         with self.assertRaises(JobError):
             self.job.mark_done("assembly")

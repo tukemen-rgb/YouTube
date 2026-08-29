@@ -116,22 +116,24 @@ class ProductionJob:
             for required in ("out/video.mp4", "out/render_manifest.json"):
                 if not (self.directory / required).is_file():
                     raise JobError(f"assembly の成果物がない: {required}")
-            # 動画が「今の」timeline.json から作られたものであること。
-            # レンダリング後に timeline を書き換えた古い動画を完了と
-            # 記録できてしまう穴を塞ぐ。
+            # 動画が「今の」計画ファイル(timeline.json / cutplan.json)
+            # から作られたものであること。レンダリング後に計画を書き換えた
+            # 古い動画を完了と記録できてしまう穴を塞ぐ。
             try:
                 manifest = json.loads(
                     (self.directory / "out/render_manifest.json").read_text(encoding="utf-8")
                 )
             except (OSError, json.JSONDecodeError) as exc:
                 raise JobError(f"render_manifest.json が読めない: {exc}")
-            current = hashlib.sha256(
-                (self.directory / "timeline.json").read_bytes()
-            ).hexdigest()
-            if manifest.get("timeline_sha256") != current:
+            plan_file = manifest.get("plan_file")
+            plan_path = self.directory / str(plan_file)
+            if not isinstance(plan_file, str) or not plan_path.is_file():
+                raise JobError(f"来歴が指す計画ファイルが読めない: {plan_file}")
+            current = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+            if manifest.get("plan_sha256") != current:
                 raise JobError(
-                    "out/video.mp4 は今の timeline.json から作られたものではない。"
-                    "render し直すこと。"
+                    f"out/video.mp4 は今の {plan_file} から作られたものではない。"
+                    "作り直すこと。"
                 )
         if stage == "publish":
             if not (self.directory / "approval.json").is_file():
