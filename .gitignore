@@ -1,0 +1,6 @@
+# 生成物はコミットしない(timeline.json から誰でも再生成できる)
+productions/
+__pycache__/
+*.egg-info/
+build/
+.venv/

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videoyard"
+version = "0.1.0"
+description = "シドラスタジオの YouTube 動画制作パイプライン(v0.1: オフラインの決定的レンダリング骨格)"
+requires-python = ">=3.11"
+# 実行時依存はゼロ(標準ライブラリ+外部コマンドの ffmpeg のみ)。
+# sidra-ai / GAMEYARD と同じ「依存を増やさない」方針。
+dependencies = []
+
+[project.scripts]
+videoyard = "videoyard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
