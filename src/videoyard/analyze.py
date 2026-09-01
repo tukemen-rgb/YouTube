@@ -287,7 +287,7 @@ def trim_to_target(segments: list[PlanSegment], scores: list[float],
 
     chosen: list[tuple[float, float, PlanSegment]] = []
     remaining = target_seconds
-    for score, start, end, parent in sorted(chunks, key=lambda c: -c[0]):
+    for _score, start, end, parent in sorted(chunks, key=lambda c: -c[0]):
         if remaining <= 0:
             break
         chosen.append((start, end, parent))

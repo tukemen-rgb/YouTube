@@ -129,7 +129,7 @@ def zscores(values: list[float]) -> list[float]:
 def onsets(loudness: list[float]) -> list[float]:
     """音量の「急な立ち上がり」= 前の窓からの増分(下がりは 0)。"""
     out = [0.0]
-    for previous, current in zip(loudness, loudness[1:]):
+    for previous, current in zip(loudness, loudness[1:], strict=False):
         out.append(max(0.0, current - previous))
     return out
 
@@ -154,8 +154,8 @@ def combine_features(features: dict[str, list[float] | None],
         raw = [weights.motion * m for m in z_motion]
     else:
         raw = [
-            weights.motion * m + weights.loudness * l + weights.onset * o
-            for m, l, o in zip(z_motion, z_loud, z_onset)
+            weights.motion * m + weights.loudness * loud + weights.onset * o
+            for m, loud, o in zip(z_motion, z_loud, z_onset, strict=True)
         ]
     if not raw:
         return []

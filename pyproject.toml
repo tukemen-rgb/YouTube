@@ -11,8 +11,20 @@ requires-python = ">=3.11"
 # sidra-ai / GAMEYARD と同じ「依存を増やさない」方針。
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["ruff>=0.5"]
+
 [project.scripts]
 videoyard = "videoyard.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/F: 文法・未使用・未定義。I: import の並び。B: ありがちなバグ。
+# UP: 古い書き方。SIM: 単純化できる書き方。
+select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

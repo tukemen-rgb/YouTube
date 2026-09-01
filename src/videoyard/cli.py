@@ -19,6 +19,7 @@ from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
 from videoyard.cut import cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
+from videoyard.job import JobError, ProductionJob
 from videoyard.learning import (
     LearningError,
     load_examples,
@@ -28,7 +29,6 @@ from videoyard.learning import (
     train,
 )
 from videoyard.llm import LlmError, OllamaTelopWriter
-from videoyard.job import JobError, ProductionJob
 from videoyard.render import RenderError, render
 from videoyard.timeline import Scene, Timeline, TimelineError
 

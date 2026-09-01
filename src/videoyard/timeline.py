@@ -93,7 +93,8 @@ class Timeline:
             ("height", self.height, 16, 2160),
             ("fps", self.fps, 1, 60),
         ):
-            _require(isinstance(value, int) and low <= value <= high, f"{name} は {low}〜{high} の整数")
+            _require(isinstance(value, int) and low <= value <= high,
+                     f"{name} は {low}〜{high} の整数")
         _require(
             self.width % 2 == 0 and self.height % 2 == 0,
             "width / height は偶数(H.264 の制約)",
@@ -122,7 +123,7 @@ class Timeline:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, data: object) -> "Timeline":
+    def from_dict(cls, data: object) -> Timeline:
         _require(isinstance(data, dict), "timeline はオブジェクト")
         assert isinstance(data, dict)
         known = {"format_version", "width", "height", "fps", "scenes"}
@@ -139,7 +140,8 @@ class Timeline:
             scene_known = {"text", "duration_seconds", "background", "text_color", "font_size"}
             scene_unknown = set(raw) - scene_known
             _require(not scene_unknown, f"scenes[{i}] の未知のキー: {sorted(scene_unknown)}")
-            _require("text" in raw and "duration_seconds" in raw, f"scenes[{i}] に text と duration_seconds は必須")
+            _require("text" in raw and "duration_seconds" in raw,
+                     f"scenes[{i}] に text と duration_seconds は必須")
             scenes.append(Scene(**raw))
         kwargs: dict[str, object] = {}
         for key in ("format_version", "width", "height", "fps"):
@@ -148,13 +150,13 @@ class Timeline:
         return cls(scenes=tuple(scenes), **kwargs)  # type: ignore[arg-type]
 
     @classmethod
-    def load(cls, path: Path) -> "Timeline":
+    def load(cls, path: Path) -> Timeline:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            raise TimelineError(f"timeline がない: {path}")
+            raise TimelineError(f"timeline がない: {path}") from None
         except json.JSONDecodeError as exc:
-            raise TimelineError(f"timeline が JSON として読めない: {path}: {exc}")
+            raise TimelineError(f"timeline が JSON として読めない: {path}: {exc}") from exc
         return cls.from_dict(data)
 
     def save(self, path: Path) -> None:

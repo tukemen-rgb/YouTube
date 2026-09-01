@@ -164,7 +164,8 @@ class RealRendering(unittest.TestCase):
             directory = Path(tmp) / "prod"
             directory.mkdir()
             # timeline.json が無い → 失敗し、out/video.mp4 は現れない
-            with self.assertRaises(Exception):
+            from videoyard.timeline import TimelineError
+            with self.assertRaises(TimelineError):
                 render(directory)
             self.assertFalse((directory / "out" / "video.mp4").exists())
 

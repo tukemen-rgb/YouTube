@@ -106,9 +106,8 @@ class CommandBuilding(unittest.TestCase):
         plan = _plan(segments=(
             PlanSegment(start=0.0, end=10.0, action="keep", telop="あ" * 120),
         ))
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(CutError):
-                write_telop_files(plan, Path(tmp))
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(CutError):
+            write_telop_files(plan, Path(tmp))
 
 
 @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg が無い環境ではスキップ")

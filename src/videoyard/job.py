@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 FORMAT_VERSION = 1
@@ -52,7 +52,7 @@ class ProductionJob:
     # ---- 生成と読み書き ----------------------------------------------
 
     @classmethod
-    def create(cls, directory: Path, title: str) -> "ProductionJob":
+    def create(cls, directory: Path, title: str) -> ProductionJob:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "job.json"
         if path.exists():
@@ -68,14 +68,14 @@ class ProductionJob:
         return job
 
     @classmethod
-    def load(cls, directory: Path) -> "ProductionJob":
+    def load(cls, directory: Path) -> ProductionJob:
         path = directory / "job.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            raise JobError(f"job.json がない: {path}")
+            raise JobError(f"job.json がない: {path}") from None
         except json.JSONDecodeError as exc:
-            raise JobError(f"job.json が JSON として読めない: {exc}")
+            raise JobError(f"job.json が JSON として読めない: {exc}") from exc
         if not isinstance(data, dict) or data.get("format_version") != FORMAT_VERSION:
             raise JobError("job.json の format_version が想定と違う")
         stages = data.get("stages")
@@ -124,7 +124,7 @@ class ProductionJob:
                     (self.directory / "out/render_manifest.json").read_text(encoding="utf-8")
                 )
             except (OSError, json.JSONDecodeError) as exc:
-                raise JobError(f"render_manifest.json が読めない: {exc}")
+                raise JobError(f"render_manifest.json が読めない: {exc}") from exc
             plan_file = manifest.get("plan_file")
             plan_path = self.directory / str(plan_file)
             if not isinstance(plan_file, str) or not plan_path.is_file():
@@ -135,9 +135,8 @@ class ProductionJob:
                     f"out/video.mp4 は今の {plan_file} から作られたものではない。"
                     "作り直すこと。"
                 )
-        if stage == "publish":
-            if not (self.directory / "approval.json").is_file():
-                raise ApprovalRequired(
+        if stage == "publish" and not (self.directory / "approval.json").is_file():
+            raise ApprovalRequired(
                     "approval.json(人間の承認記録)が無いので publish を"
                     "完了にできない。承認なしの公開はこの仕組みに存在しない。"
                 )
@@ -163,4 +162,4 @@ class ProductionJob:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")

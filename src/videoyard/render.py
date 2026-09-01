@@ -20,7 +20,7 @@ import json
 import shutil
 import subprocess
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from videoyard.fonts import resolve_font
@@ -140,7 +140,7 @@ def build_command(
         args += ["-f", "lavfi", "-i", source]
 
     filters = []
-    for index, (scene, text_path) in enumerate(zip(timeline.scenes, text_paths)):
+    for index, (scene, text_path) in enumerate(zip(timeline.scenes, text_paths, strict=True)):
         if scene.text == "":
             # 無地の間(ポーズ)。drawtext は空ファイルを嫌うので通さない。
             filters.append(f"[{index}:v]null[v{index}]")
@@ -209,7 +209,7 @@ def render(production_dir: Path, ffmpeg: str = "ffmpeg") -> dict[str, object]:
     ).stdout.splitlines()
     manifest: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,
-        "rendered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "rendered_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "ffmpeg_version": version_line[0] if version_line else "unknown",
         "plan_file": "timeline.json",
         "plan_sha256": _sha256(timeline_path),

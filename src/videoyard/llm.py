@@ -117,7 +117,7 @@ class OllamaTelopWriter:
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
             raise LlmError(
                 f"ローカル AI({self.base_url})に接続できない/応答が読めない: {exc}"
-            )
+            ) from exc
         text = body.get("response")
         if not isinstance(text, str):
             raise LlmError("ローカル AI の応答に response が無い")

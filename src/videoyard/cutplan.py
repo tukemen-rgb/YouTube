@@ -57,7 +57,7 @@ class PlanSegment:
             "excite は 0〜100 の整数か無し",
         )
 
-    def replaced(self, **changes: object) -> "PlanSegment":
+    def replaced(self, **changes: object) -> PlanSegment:
         return replace(self, **changes)  # type: ignore[arg-type]
 
     def to_dict(self) -> dict[str, object]:
@@ -129,7 +129,7 @@ class CutPlan:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, data: object) -> "CutPlan":
+    def from_dict(cls, data: object) -> CutPlan:
         _require(isinstance(data, dict), "cutplan はオブジェクト")
         assert isinstance(data, dict)
         known = {"format_version", "source_path", "source_sha256", "duration",
@@ -152,13 +152,13 @@ class CutPlan:
         return cls(segments=tuple(segments), **rest)  # type: ignore[arg-type]
 
     @classmethod
-    def load(cls, path: Path) -> "CutPlan":
+    def load(cls, path: Path) -> CutPlan:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            raise CutPlanError(f"cutplan がない: {path}(先に analyze を実行)")
+            raise CutPlanError(f"cutplan がない: {path}(先に analyze を実行)") from None
         except json.JSONDecodeError as exc:
-            raise CutPlanError(f"cutplan が JSON として読めない: {exc}")
+            raise CutPlanError(f"cutplan が JSON として読めない: {exc}") from exc
         return cls.from_dict(data)
 
     def save(self, path: Path) -> None:

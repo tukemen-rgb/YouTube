@@ -12,10 +12,9 @@ render.py と同じ決まり: コマンドは計画とパスだけから組み�
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from videoyard.cutplan import CutPlan, PlanSegment
@@ -120,7 +119,7 @@ def build_command(
 
     n = len(keep_indexes)
     if plan.has_audio:
-        pairs = "".join(v + a for v, a in zip(labels_v, labels_a))
+        pairs = "".join(v + a for v, a in zip(labels_v, labels_a, strict=True))
         filters.append(f"{pairs}concat=n={n}:v=1:a=1[outv][outa]")
     else:
         filters.append(f"{''.join(labels_v)}concat=n={n}:v=1:a=0[outv]")
@@ -178,7 +177,7 @@ def cut(production_dir: Path, ffmpeg: str = "ffmpeg") -> dict[str, object]:
     ).stdout.splitlines()
     manifest: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,
-        "rendered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "rendered_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "ffmpeg_version": version_line[0] if version_line else "unknown",
         "plan_file": "cutplan.json",
         "plan_sha256": _sha256(plan_path),

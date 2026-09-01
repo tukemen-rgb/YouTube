@@ -28,7 +28,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from videoyard.cutplan import CutPlan
@@ -140,7 +140,7 @@ def record_feedback(production_dir: Path, directory: Path | None = None) -> int:
                 kept_lines.append(line)
     for example in examples:
         record = {"source_sha256": final.source_sha256,
-                  "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
                   **example.to_dict()}
         kept_lines.append(json.dumps(record, ensure_ascii=False, sort_keys=True))
     tmp = path.with_suffix(".tmp")
@@ -196,7 +196,7 @@ def train(examples: list[Example], epochs: int = 300, learning_rate: float = 0.1
         gb = 0.0
         for ex in examples:
             x = (ex.motion, ex.loudness, ex.onset)
-            p = _sigmoid(sum(wi * xi for wi, xi in zip(w, x)) + b)
+            p = _sigmoid(sum(wi * xi for wi, xi in zip(w, x, strict=True)) + b)
             error = p - (1.0 if ex.kept else 0.0)
             for j in range(3):
                 gw[j] += error * x[j]
@@ -221,7 +221,7 @@ def save_weights(weights: ScoreWeights, examples: int, accuracy: float,
     path = directory / _WEIGHTS_FILE
     payload = {
         "format_version": 1,
-        "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "examples": examples,
         "training_accuracy": round(accuracy, 4),
         "weights": {"motion": weights.motion, "loudness": weights.loudness,
@@ -248,5 +248,5 @@ def load_weights(directory: Path | None = None) -> tuple[ScoreWeights, dict[str,
                                onset=float(raw["onset"]))
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise LearningError(f"weights.json が読めない({path}): {exc}。"
-                            "消せば既定の重みに戻る。")
+                            "消せば既定の重みに戻る。") from exc
     return weights, data
