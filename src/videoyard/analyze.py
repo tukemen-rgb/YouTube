@@ -31,8 +31,12 @@ from videoyard.cutplan import CutPlan, PlanSegment
 from videoyard.excitement import (
     WINDOW_SECONDS,
     ScoreWeights,
+    bucketize,
+    combine_features,
+    measure_loudness,
+    measure_motion,
     range_score,
-    score_source,
+    window_features,
 )
 from videoyard.llm import OllamaTelopWriter, SceneBrief
 
@@ -56,6 +60,7 @@ class AnalyzeParams:
     min_silence: float = 0.8      # 無音とみなす最短秒数
     still_noise: float = 0.003    # 静止画判定の許容ノイズ(0..1)
     min_still: float = 1.0        # 静止画とみなす最短秒数
+    near_still_ydif: float = 0.2  # 動き量(YDIF)がこれ未満なら「ほぼ静止」。0 で無効
     min_cut: float = 1.0          # これより短い退屈は切らない(細切れ防止)
     min_keep: float = 0.6         # これより短い残しは諦めて切る
     target_seconds: float | None = None  # 指定すると盛り上がり度上位でこの尺に収める
@@ -146,6 +151,32 @@ def parse_freeze(stderr: str, duration: float) -> list[Interval]:
 
 def parse_silence(stderr: str, duration: float) -> list[Interval]:
     return _parse_pairs(stderr, _SILENCE_START, _SILENCE_END, duration)
+
+
+def low_motion_intervals(motion: list[float], window: float, threshold: float,
+                         min_still: float) -> list[Interval]:
+    """動き量が threshold 未満のまま min_still 秒以上続く区間。
+
+    freezedetect は画素の完全一致に近い基準なので、実写のノイズや
+    点滅カーソル程度の微動で「静止」を取りこぼす(実測)。既に測って
+    いる窓ごとの動き量(YDIF)で「ほぼ静止」を拾い、補完する。
+    threshold は生の YDIF 値で、0 にするとこの検出は無効になる。
+    """
+    if threshold <= 0:
+        return []
+    intervals: list[Interval] = []
+    start: float | None = None
+    for i, value in enumerate(motion):
+        if value < threshold:
+            if start is None:
+                start = i * window
+        elif start is not None:
+            if i * window - start >= min_still:
+                intervals.append((start, i * window))
+            start = None
+    if start is not None and len(motion) * window - start >= min_still:
+        intervals.append((start, len(motion) * window))
+    return intervals
 
 
 # ---- 区間の計算(純粋関数) ----------------------------------------------
@@ -377,17 +408,25 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
         )
     stderr = run_detection(source, params, has_audio, ffmpeg=ffmpeg)
     duration = float(info["duration"])  # type: ignore[arg-type]
-    static = parse_freeze(stderr, duration)
+
+    # 動き・音量の測定は 1 回だけ行い、静止判定と盛り上がり度の両方に使う。
+    motion = bucketize(measure_motion(source, ffmpeg=ffmpeg), duration)
+    loudness = (
+        bucketize(measure_loudness(source, ffmpeg=ffmpeg), duration)
+        if has_audio else None
+    )
+
+    # 静止 = freezedetect(完全一致に近い)+ 動き量による「ほぼ静止」の補完
+    static = parse_freeze(stderr, duration) + low_motion_intervals(
+        motion, WINDOW_SECONDS, params.near_still_ydif, params.min_still
+    )
     silent = parse_silence(stderr, duration) if has_audio else []
     segments = propose_segments(duration, static, silent, params)
 
-    # 盛り上がり度: 動き(+音があれば音量・音の立ち上がり)の測定から
-    # 窓ごとの点数を作り、keep 区間へ注釈する。重みは学習済みのものが
-    # 渡されればそれを、無ければ既定を使う。
-    scores, features = score_source(
-        source, duration, has_audio,
-        weights=weights or ScoreWeights(), ffmpeg=ffmpeg,
-    )
+    # 盛り上がり度: 測定済みの特徴量から窓ごとの点数を作り、keep 区間へ
+    # 注釈する。重みは学習済みのものが渡されればそれを、無ければ既定。
+    features = window_features(motion, loudness)
+    scores = combine_features(features, weights or ScoreWeights())
     if params.target_seconds is not None:
         segments = trim_to_target(
             segments, scores, params.target_seconds, params.chunk_seconds

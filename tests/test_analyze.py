@@ -99,6 +99,30 @@ class Proposal(unittest.TestCase):
         self.assertEqual(telops, ["シーン 1", "シーン 2"])
 
 
+class NearStill(unittest.TestCase):
+    def test_sustained_low_motion_detected(self):
+        from videoyard.analyze import low_motion_intervals
+        motion = [0.05, 0.05, 0.05, 0.05, 5.0, 5.0, 0.05, 5.0]  # 窓 0.5s
+        intervals = low_motion_intervals(motion, window=0.5, threshold=0.2, min_still=1.0)
+        # 最初の 2 秒だけ(3〜3.5 秒の 1 窓は min_still 未満で拾わない)
+        self.assertEqual(intervals, [(0.0, 2.0)])
+
+    def test_tail_low_motion_detected(self):
+        from videoyard.analyze import low_motion_intervals
+        motion = [5.0, 5.0, 0.05, 0.05, 0.05]
+        self.assertEqual(
+            low_motion_intervals(motion, window=0.5, threshold=0.2, min_still=1.0),
+            [(1.0, 2.5)],
+        )
+
+    def test_zero_threshold_disables(self):
+        from videoyard.analyze import low_motion_intervals
+        self.assertEqual(
+            low_motion_intervals([0.0] * 10, window=0.5, threshold=0.0, min_still=1.0),
+            [],
+        )
+
+
 class Highlight(unittest.TestCase):
     def test_loudest_marked(self):
         segments = propose_segments(

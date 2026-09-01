@@ -19,6 +19,7 @@ from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
 from videoyard.cut import cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
+from videoyard.intro import GameFacts, IntroError, build_timeline
 from videoyard.job import JobError, ProductionJob
 from videoyard.learning import (
     LearningError,
@@ -83,6 +84,7 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
         min_silence=args.min_silence,
         still_noise=args.still_noise,
         min_still=args.min_still,
+        near_still_ydif=args.near_still_ydif,
         min_cut=args.min_cut,
         min_keep=args.min_keep,
         target_seconds=args.target_seconds,
@@ -130,6 +132,20 @@ def cmd_cut(directory: Path, _args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intro(directory: Path, args: argparse.Namespace) -> int:
+    facts = GameFacts.load(args.facts)
+    directory.mkdir(parents=True, exist_ok=True)
+    if not (directory / "job.json").is_file():
+        ProductionJob.create(directory, title=f"{facts.name} の紹介動画")
+    timeline = build_timeline(facts)
+    timeline.save(directory / "timeline.json")
+    print(f"紹介動画のタイムライン: {directory / 'timeline.json'}")
+    print(f"シーン {len(timeline.scenes)} 個 / 合計 {timeline.total_seconds:.1f} 秒")
+    print("動画に出る文言はすべて facts と定型見出しのみ(生成器は発明しない)。")
+    print(f"次: python -m videoyard render {directory}")
+    return 0
+
+
 def cmd_learn(_args: argparse.Namespace) -> int:
     examples = load_examples()
     weights, accuracy = train(examples)
@@ -159,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     analyze_cmd.add_argument("--min-silence", type=float, default=0.8)
     analyze_cmd.add_argument("--still-noise", type=float, default=0.003)
     analyze_cmd.add_argument("--min-still", type=float, default=1.0)
+    analyze_cmd.add_argument("--near-still-ydif", type=float, default=0.2,
+                             help="動き量がこれ未満なら「ほぼ静止」とみなす"
+                                  "(ノイズの多い録画向け。0 で無効)")
     analyze_cmd.add_argument("--min-cut", type=float, default=1.0)
     analyze_cmd.add_argument("--min-keep", type=float, default=0.6)
     analyze_cmd.add_argument("--target-seconds", type=float, default=None,
@@ -180,6 +199,12 @@ def main(argv: list[str] | None = None) -> int:
     cut_cmd.add_argument("directory", type=Path)
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
+    intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")
+    intro_cmd.add_argument("directory", type=Path)
+    intro_cmd.add_argument("--facts", type=Path, required=True,
+                           help="facts の JSON(見本: examples/facts-sample.json)")
+    intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
+
     learn_cmd = sub.add_parser("learn", help="貯まった添削から採点基準を学習し直す")
     learn_cmd.set_defaults(handler=cmd_learn)
 
@@ -187,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except (TimelineError, RenderError, JobError, FontError,
-            AnalyzeError, CutPlanError, LlmError, LearningError) as exc:
+            AnalyzeError, CutPlanError, LlmError, LearningError, IntroError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
 
