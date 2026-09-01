@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
-from videoyard.cut import SHORTS_RECOMMENDED_SECONDS, cut
+from videoyard.cut import BGM_DEFAULT_GAIN_DB, SHORTS_RECOMMENDED_SECONDS, cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
 from videoyard.intro import GameFacts, IntroError, build_timeline
@@ -151,7 +151,8 @@ def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
     manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
-                   vertical=args.vertical, fast=args.fast)
+                   vertical=args.vertical, fast=args.fast,
+                   bgm=args.bgm, bgm_gain_db=args.bgm_db)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     if args.vertical:
@@ -243,6 +244,11 @@ def main(argv: list[str] | None = None) -> int:
     cut_cmd.add_argument("--fast", action="store_true",
                          help="速さ優先(全コア+高速プリセット)。バイト単位の"
                               "再現性は保証されない")
+    cut_cmd.add_argument("--bgm", type=Path, default=None,
+                         help="手持ちの BGM ファイルをゲーム音の下に重ねる"
+                              "(短ければループ、末尾フェードアウト)")
+    cut_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB,
+                         help="BGM の音量(dB、既定 -16)")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")

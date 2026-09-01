@@ -124,6 +124,25 @@ class CommandBuilding(unittest.TestCase):
         self.assertIn("medium", default)
         self.assertEqual(default[default.index("-threads") + 1], "1")
 
+    def test_bgm_mixed_under_game_audio_then_normalized(self):
+        # BGM はゲーム音の下に控えめに敷き(C10)、ミックス後に正規化する
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             bgm=Path("/music.mp3"))
+        self.assertIn("-stream_loop", args)  # 短い BGM はループ
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertIn("volume=-16.0dB", filter_arg)
+        self.assertIn("amix=inputs=2:duration=first:normalize=0", filter_arg)
+        self.assertLess(filter_arg.index("amix"), filter_arg.index("loudnorm"))
+        self.assertIn("afade=t=out", filter_arg)  # 末尾フェードアウト
+
+    def test_bgm_becomes_sole_audio_for_silent_video(self):
+        plan = _plan(has_audio=False)
+        args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             bgm=Path("/music.mp3"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertNotIn("amix", filter_arg)   # 混ぜる相手がいない
+        self.assertIn("-c:a", args)            # BGM が唯一の音声になる
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
@@ -253,6 +272,30 @@ class RealCut(unittest.TestCase):
             capture_output=True, text=True, check=True,
         )
         self.assertEqual(probe.stdout.strip(), "1080,1920")
+
+    def test_cut_with_bgm_produces_audio(self):
+        from videoyard.analyze import AnalyzeParams, analyze
+
+        base = Path(self._tmp.name)
+        bgm = base / "bgm.wav"
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "sine=frequency=220:r=44100",
+             "-t", "2", "-ac", "2", str(bgm)],
+            check=True, capture_output=True,
+        )
+        directory = base / "prod_bgm"
+        directory.mkdir()
+        analyze(directory, self.source, AnalyzeParams())
+        manifest = cut(directory, bgm=bgm)
+        self.assertEqual(len(manifest["bgm_sha256"]), 64)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+             str(directory / "out" / "video.mp4")],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertIn("audio", probe.stdout)
 
     def test_cut_rejects_changed_source(self):
         from videoyard.analyze import AnalyzeParams, analyze

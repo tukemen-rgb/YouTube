@@ -51,6 +51,11 @@ VERTICAL_HEIGHT = 1920
 #: ショートとして推奨される最長秒数(超えても作れるが警告する)。
 SHORTS_RECOMMENDED_SECONDS = 60.0
 
+#: BGM の既定音量(dB)と末尾フェードアウト秒数。BGM はゲーム音の
+#: 「下」に控えめに敷くのが基本(C10)。
+BGM_DEFAULT_GAIN_DB = -16.0
+BGM_FADE_OUT_SECONDS = 1.5
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -106,6 +111,8 @@ def build_command(
     normalize_loudness: bool = True,
     vertical: bool = False,
     fast: bool = False,
+    bgm: Path | None = None,
+    bgm_gain_db: float = -16.0,
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
@@ -136,20 +143,42 @@ def build_command(
 
     n = len(keep_indexes)
     video_label = "[outv]"
-    audio_label = "[outa]"
+    audio_label: str | None = None
     if plan.has_audio:
         pairs = "".join(v + a for v, a in zip(labels_v, labels_a, strict=True))
         filters.append(f"{pairs}concat=n={n}:v=1:a=1[outv][outa]")
-        if normalize_loudness:
-            # loudnorm は内部で 192kHz 化するので、通常のレートへ戻す。
-            filters.append(
-                f"[outa]loudnorm=I={LOUDNESS_TARGET_LUFS}"
-                f":TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
-                ",aresample=48000[outn]"
-            )
-            audio_label = "[outn]"
+        audio_label = "[outa]"
     else:
         filters.append(f"{''.join(labels_v)}concat=n={n}:v=1:a=0[outv]")
+
+    if bgm is not None:
+        # BGM はゲーム音の「下」に控えめに敷く(C10)。動画より短ければ
+        # 入力側でループし、末尾はフェードアウトで終える。
+        kept = round(plan.kept_seconds, 3)
+        fade_start = round(max(0.0, kept - BGM_FADE_OUT_SECONDS), 3)
+        filters.append(
+            f"[1:a]atrim=0:{kept},asetpts=PTS-STARTPTS"
+            f",volume={bgm_gain_db}dB"
+            f",afade=t=out:st={fade_start}:d={BGM_FADE_OUT_SECONDS}[bgma]"
+        )
+        if audio_label is not None:
+            # normalize=0: amix 既定の自動音量調整を切り、意図した音量差を保つ
+            filters.append(
+                f"{audio_label}[bgma]amix=inputs=2:duration=first:normalize=0[mixa]"
+            )
+            audio_label = "[mixa]"
+        else:
+            audio_label = "[bgma]"
+
+    if audio_label is not None and normalize_loudness:
+        # ミックス後に正規化する(BGM 込みの音量で -14 LUFS に揃える)。
+        # loudnorm は内部で 192kHz 化するので、通常のレートへ戻す。
+        filters.append(
+            f"{audio_label}loudnorm=I={LOUDNESS_TARGET_LUFS}"
+            f":TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
+            ",aresample=48000[outn]"
+        )
+        audio_label = "[outn]"
 
     if vertical:
         # ショート(9:16)化。中央クロップは端の UI が欠けるので、定番の
@@ -164,9 +193,11 @@ def build_command(
         )
         video_label = "[vout]"
 
-    args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(source),
-            "-filter_complex", ";".join(filters), "-map", video_label]
-    if plan.has_audio:
+    args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(source)]
+    if bgm is not None:
+        args += ["-stream_loop", "-1", "-i", str(bgm)]
+    args += ["-filter_complex", ";".join(filters), "-map", video_label]
+    if audio_label is not None:
         args += ["-map", audio_label, "-c:a", "aac", "-b:a", "192k"]
     if fast:
         # 速さ優先(C4/U5): 全コア+高速プリセット。同じ入力から同じ
@@ -189,6 +220,7 @@ def build_command(
 
 def cut(production_dir: Path, normalize_loudness: bool = True,
         vertical: bool = False, fast: bool = False,
+        bgm: Path | None = None, bgm_gain_db: float = BGM_DEFAULT_GAIN_DB,
         ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
@@ -212,9 +244,11 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
     tmp_path = out_dir / "video.tmp.mp4"
     tmp_path.unlink(missing_ok=True)
 
+    if bgm is not None and not bgm.is_file():
+        raise CutError(f"BGM ファイルがない: {bgm}")
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
                          normalize_loudness=normalize_loudness, vertical=vertical,
-                         fast=fast, ffmpeg=ffmpeg)
+                         fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -239,6 +273,9 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "duration_seconds": plan.kept_seconds,
         "vertical": vertical,
         "fast": fast,
+        "bgm_path": str(bgm) if bgm is not None else "",
+        "bgm_sha256": _sha256(bgm) if bgm is not None else "",
+        "bgm_gain_db": bgm_gain_db if bgm is not None else None,
         "command": args,
     }
     tmp_path.replace(final_path)
