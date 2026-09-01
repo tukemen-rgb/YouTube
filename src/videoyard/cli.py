@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
-from videoyard.cut import cut
+from videoyard.cut import SHORTS_RECOMMENDED_SECONDS, cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
 from videoyard.intro import GameFacts, IntroError, build_timeline
@@ -128,9 +128,15 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
 
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
-    manifest = cut(directory, normalize_loudness=not args.no_loudnorm)
+    manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
+                   vertical=args.vertical)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
+    if args.vertical:
+        duration = float(manifest["duration_seconds"])  # type: ignore[arg-type]
+        if duration > SHORTS_RECOMMENDED_SECONDS:
+            print(f"注意: {duration:.0f} 秒はショート推奨({SHORTS_RECOMMENDED_SECONDS:.0f} 秒)"
+                  "を超えている。analyze --target-seconds 60 で縮められる。")
     print(f"長さ: {manifest['duration_seconds']:.1f} 秒 / {manifest['output_bytes']} バイト")
     recorded = record_feedback(directory)
     if recorded:
@@ -210,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     cut_cmd.add_argument("directory", type=Path)
     cut_cmd.add_argument("--no-loudnorm", action="store_true",
                          help="音量の正規化(YouTube 基準 -14 LUFS)を行わない")
+    cut_cmd.add_argument("--vertical", action="store_true",
+                         help="ショート用の縦動画(1080x1920、ぼかし背景+中央配置)で出力")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")

@@ -45,6 +45,12 @@ LOUDNESS_TARGET_LUFS = -14.0
 LOUDNESS_TRUE_PEAK = -1.5
 LOUDNESS_RANGE = 11.0
 
+#: ショート(縦動画)の出力サイズ。YouTube ショートの標準。
+VERTICAL_WIDTH = 1080
+VERTICAL_HEIGHT = 1920
+#: ショートとして推奨される最長秒数(超えても作れるが警告する)。
+SHORTS_RECOMMENDED_SECONDS = 60.0
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -98,6 +104,7 @@ def build_command(
     telop_paths: dict[int, Path],
     output_path: Path,
     normalize_loudness: bool = True,
+    vertical: bool = False,
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
@@ -127,6 +134,7 @@ def build_command(
             labels_a.append(f"[a{n}]")
 
     n = len(keep_indexes)
+    video_label = "[outv]"
     audio_label = "[outa]"
     if plan.has_audio:
         pairs = "".join(v + a for v, a in zip(labels_v, labels_a, strict=True))
@@ -142,8 +150,21 @@ def build_command(
     else:
         filters.append(f"{''.join(labels_v)}concat=n={n}:v=1:a=0[outv]")
 
+    if vertical:
+        # ショート(9:16)化。中央クロップは端の UI が欠けるので、定番の
+        # 「引き伸ばしてぼかした背景の上に、元映像を幅いっぱいで中央配置」。
+        filters.append(
+            "[outv]split=2[bg][fg];"
+            f"[bg]scale={VERTICAL_WIDTH}:{VERTICAL_HEIGHT}"
+            ":force_original_aspect_ratio=increase"
+            f",crop={VERTICAL_WIDTH}:{VERTICAL_HEIGHT},boxblur=20:5[bgb];"
+            f"[fg]scale={VERTICAL_WIDTH}:-2[fgs];"
+            "[bgb][fgs]overlay=(W-w)/2:(H-h)/2[vout]"
+        )
+        video_label = "[vout]"
+
     args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(source),
-            "-filter_complex", ";".join(filters), "-map", "[outv]"]
+            "-filter_complex", ";".join(filters), "-map", video_label]
     if plan.has_audio:
         args += ["-map", audio_label, "-c:a", "aac", "-b:a", "192k"]
     args += [
@@ -161,7 +182,7 @@ def build_command(
 
 
 def cut(production_dir: Path, normalize_loudness: bool = True,
-        ffmpeg: str = "ffmpeg") -> dict[str, object]:
+        vertical: bool = False, ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
@@ -185,7 +206,8 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
     tmp_path.unlink(missing_ok=True)
 
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
-                         normalize_loudness=normalize_loudness, ffmpeg=ffmpeg)
+                         normalize_loudness=normalize_loudness, vertical=vertical,
+                         ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -208,6 +230,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "output_sha256": _sha256(tmp_path),
         "output_bytes": tmp_path.stat().st_size,
         "duration_seconds": plan.kept_seconds,
+        "vertical": vertical,
         "command": args,
     }
     tmp_path.replace(final_path)

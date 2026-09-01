@@ -99,6 +99,21 @@ class CommandBuilding(unittest.TestCase):
                              normalize_loudness=False)
         self.assertNotIn("loudnorm", args[args.index("-filter_complex") + 1])
 
+    def test_vertical_uses_blur_background(self):
+        # ショート化は中央クロップではなく「ぼかし背景+中央配置」(C8)
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             vertical=True)
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertIn("boxblur", filter_arg)
+        self.assertIn("1080:1920", filter_arg)
+        self.assertIn("overlay=(W-w)/2:(H-h)/2", filter_arg)
+        self.assertIn("[vout]", args)
+
+    def test_default_output_is_not_vertical(self):
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        self.assertNotIn("boxblur", args[args.index("-filter_complex") + 1])
+        self.assertIn("[outv]", args)
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
@@ -213,6 +228,21 @@ class RealCut(unittest.TestCase):
                        AnalyzeParams(target_seconds=3.0, chunk_seconds=2.0))
         self.assertLessEqual(plan.kept_seconds, 3.0 + 2.0)
         self.assertGreater(plan.kept_seconds, 0.0)
+
+    def test_vertical_cut_outputs_1080x1920(self):
+        from videoyard.analyze import AnalyzeParams, analyze
+
+        directory = Path(self._tmp.name) / "prod_vertical"
+        directory.mkdir()
+        analyze(directory, self.source, AnalyzeParams())
+        cut(directory, vertical=True)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0",
+             str(directory / "out" / "video.mp4")],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(probe.stdout.strip(), "1080,1920")
 
     def test_cut_rejects_changed_source(self):
         from videoyard.analyze import AnalyzeParams, analyze
