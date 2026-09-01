@@ -31,6 +31,7 @@ from videoyard.learning import (
 )
 from videoyard.llm import LlmError, OllamaTelopWriter
 from videoyard.render import RenderError, render
+from videoyard.thumbs import extract_thumbnails
 from videoyard.timeline import Scene, Timeline, TimelineError
 
 _DEMO_SCENES = (
@@ -129,6 +130,10 @@ def cmd_cut(directory: Path, _args: argparse.Namespace) -> int:
     if recorded:
         print(f"添削 {recorded} 窓ぶんを学習用に記録した"
               "(貯まったら python -m videoyard learn)")
+    thumbnails = extract_thumbnails(directory)
+    if thumbnails:
+        print(f"サムネイル候補 {len(thumbnails)} 枚: {thumbnails[0].parent}"
+              "(盛り上がり度上位の瞬間。thumbnails.json に選定理由)")
     return 0
 
 
