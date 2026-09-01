@@ -114,6 +114,16 @@ class CommandBuilding(unittest.TestCase):
         self.assertNotIn("boxblur", args[args.index("-filter_complex") + 1])
         self.assertIn("[outv]", args)
 
+    def test_fast_mode_uses_all_cores(self):
+        # 速さ優先(C4/U5): 全コア+高速プリセット。既定は決定的なまま
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             fast=True)
+        self.assertIn("veryfast", args)
+        self.assertEqual(args[args.index("-threads") + 1], "0")
+        default = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        self.assertIn("medium", default)
+        self.assertEqual(default[default.index("-threads") + 1], "1")
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))

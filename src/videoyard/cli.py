@@ -151,7 +151,7 @@ def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
     manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
-                   vertical=args.vertical)
+                   vertical=args.vertical, fast=args.fast)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     if args.vertical:
@@ -240,6 +240,9 @@ def main(argv: list[str] | None = None) -> int:
                          help="音量の正規化(YouTube 基準 -14 LUFS)を行わない")
     cut_cmd.add_argument("--vertical", action="store_true",
                          help="ショート用の縦動画(1080x1920、ぼかし背景+中央配置)で出力")
+    cut_cmd.add_argument("--fast", action="store_true",
+                         help="速さ優先(全コア+高速プリセット)。バイト単位の"
+                              "再現性は保証されない")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")

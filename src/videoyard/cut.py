@@ -105,6 +105,7 @@ def build_command(
     output_path: Path,
     normalize_loudness: bool = True,
     vertical: bool = False,
+    fast: bool = False,
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
@@ -167,12 +168,17 @@ def build_command(
             "-filter_complex", ";".join(filters), "-map", video_label]
     if plan.has_audio:
         args += ["-map", audio_label, "-c:a", "aac", "-b:a", "192k"]
+    if fast:
+        # 速さ優先(C4/U5): 全コア+高速プリセット。同じ入力から同じ
+        # バイト列が出る保証はこのモードでは捨てる(来歴に fast を記録)。
+        encode = ["-preset", "veryfast", "-threads", "0"]
+    else:
+        encode = ["-preset", "medium", "-threads", "1"]
     args += [
         "-c:v", "libx264",
-        "-preset", "medium",
+        *encode,
         "-crf", "20",
         "-pix_fmt", "yuv420p",
-        "-threads", "1",
         "-fflags", "+bitexact",
         "-flags:v", "+bitexact",
         "-map_metadata", "-1",
@@ -182,7 +188,8 @@ def build_command(
 
 
 def cut(production_dir: Path, normalize_loudness: bool = True,
-        vertical: bool = False, ffmpeg: str = "ffmpeg") -> dict[str, object]:
+        vertical: bool = False, fast: bool = False,
+        ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
@@ -207,7 +214,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
 
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
                          normalize_loudness=normalize_loudness, vertical=vertical,
-                         ffmpeg=ffmpeg)
+                         fast=fast, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -231,6 +238,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "output_bytes": tmp_path.stat().st_size,
         "duration_seconds": plan.kept_seconds,
         "vertical": vertical,
+        "fast": fast,
         "command": args,
     }
     tmp_path.replace(final_path)
