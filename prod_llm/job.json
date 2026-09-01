@@ -1,0 +1,31 @@
+{
+  "created_at": "2026-09-01T05:34:59+00:00",
+  "format_version": 1,
+  "stages": {
+    "analytics": {
+      "status": "pending"
+    },
+    "assembly": {
+      "status": "pending"
+    },
+    "assets": {
+      "status": "pending"
+    },
+    "metadata": {
+      "status": "pending"
+    },
+    "plan": {
+      "status": "pending"
+    },
+    "publish": {
+      "status": "pending"
+    },
+    "script": {
+      "status": "pending"
+    },
+    "voice": {
+      "status": "pending"
+    }
+  },
+  "title": "gameplay.mp4 のダイジェスト"
+}

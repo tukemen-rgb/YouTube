@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from videoyard.cutplan import CutPlan, PlanSegment
+from videoyard.llm import OllamaTelopWriter, SceneBrief
 
 Interval = tuple[float, float]
 
@@ -244,9 +245,42 @@ def mark_highlight(segments: list[PlanSegment], volumes: dict[int, float]) -> li
     return out
 
 
+# ---- テロップ文言のローカル AI 下書き --------------------------------------
+
+def draft_telops(segments: list[PlanSegment], writer: OllamaTelopWriter,
+                 hint: str) -> list[PlanSegment]:
+    """keep 区間のテロップをローカル AI の下書きに置き換える。
+
+    下書きが得られなかった区間はテンプレート(シーン n)のまま。
+    どの文言が AI 由来かは reason に残す(人が直すときの判断材料)。
+    """
+    out = []
+    for seg in segments:
+        if seg.action != "keep":
+            out.append(seg)
+            continue
+        brief = SceneBrief(
+            number=len([s for s in out if s.action == "keep"]) + 1,
+            start=seg.start,
+            duration=seg.end - seg.start,
+            is_highlight="盛り上がり" in seg.reason,
+            hint=hint,
+        )
+        draft = writer.write(brief)
+        if draft:
+            out.append(seg.replaced(
+                telop=draft,
+                reason=seg.reason + "(テロップ文言はローカルAIの下書き)",
+            ))
+        else:
+            out.append(seg)
+    return out
+
+
 # ---- 入口 -----------------------------------------------------------------
 
 def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
+            writer: OllamaTelopWriter | None = None, hint: str = "",
             ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> CutPlan:
     """元動画を分析し、cutplan.json の案を production_dir に書く。"""
     info = probe_source(source, ffprobe=ffprobe)
@@ -274,6 +308,9 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
                 if volume is not None:
                     volumes[i] = volume
         segments = mark_highlight(segments, volumes)
+
+    if writer is not None:
+        segments = draft_telops(segments, writer, hint)
 
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     plan = CutPlan(

@@ -11,6 +11,7 @@ python -m videoyard status <dir>     段ごとの進み具合を表示
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
 from videoyard.cut import cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
+from videoyard.llm import LlmError, OllamaTelopWriter
 from videoyard.job import JobError, ProductionJob
 from videoyard.render import RenderError, render
 from videoyard.timeline import Scene, Timeline, TimelineError
@@ -76,7 +78,16 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
         min_cut=args.min_cut,
         min_keep=args.min_keep,
     )
-    plan = analyze(directory, args.source, params)
+    llm_choice = args.llm or os.environ.get("VIDEOYARD_LLM", "none")
+    writer = None
+    if llm_choice == "ollama":
+        writer = OllamaTelopWriter(
+            model=args.llm_model or os.environ.get("VIDEOYARD_LLM_MODEL", ""),
+            url=args.llm_url or os.environ.get("VIDEOYARD_LLM_URL", "http://127.0.0.1:11434"),
+        )
+    elif llm_choice != "none":
+        raise LlmError(f"知らない LLM 指定: {llm_choice}(none / ollama)")
+    plan = analyze(directory, args.source, params, writer=writer, hint=args.hint)
     keeps = plan.keeps
     print(f"カット計画の案: {directory / 'cutplan.json'}")
     print(f"元動画 {plan.duration:.1f} 秒 → 残し {plan.kept_seconds:.1f} 秒"
@@ -117,6 +128,16 @@ def main(argv: list[str] | None = None) -> int:
     analyze_cmd.add_argument("--min-still", type=float, default=1.0)
     analyze_cmd.add_argument("--min-cut", type=float, default=1.0)
     analyze_cmd.add_argument("--min-keep", type=float, default=0.6)
+    analyze_cmd.add_argument("--llm", choices=("none", "ollama"), default=None,
+                             help="テロップ文言の下書きに使うローカルAI"
+                                  "(既定: 環境変数 VIDEOYARD_LLM か none)")
+    analyze_cmd.add_argument("--llm-model", default=None,
+                             help="ローカルAIのモデル名(例: qwen2.5:7b)")
+    analyze_cmd.add_argument("--llm-url", default=None,
+                             help="Ollama の URL(localhost のみ許可)")
+    analyze_cmd.add_argument("--hint", default="",
+                             help="動画の内容ヒント(例: 'アクションゲームのボス戦')。"
+                                  "AIは映像を見ないので文言の質はこれで決まる")
     analyze_cmd.set_defaults(handler=lambda a: cmd_analyze(a.directory, a))
 
     cut_cmd = sub.add_parser("cut", help="cutplan.json のとおりに切ってつなぐ")
@@ -127,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except (TimelineError, RenderError, JobError, FontError,
-            AnalyzeError, CutPlanError) as exc:
+            AnalyzeError, CutPlanError, LlmError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
 

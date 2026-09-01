@@ -32,6 +32,12 @@ from videoyard.render import (
 TELOP_FONT_SIZE_RATIO = 0.05   # 画面高さに対する文字サイズ
 TELOP_MAX_HEIGHT_RATIO = 0.3   # テロップが占めてよい高さ
 
+#: つなぎ目の音のフェード秒数。切った端の波形が途中で断たれると
+#: 「ブツッ」というクリック音になるため、各区間の入りと終わりを
+#: この長さだけ滑らかにする。映像はあえてハードカットのまま
+#: (ゲーム動画の標準的な編集)。
+AUDIO_FADE_SECONDS = 0.15
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -102,8 +108,13 @@ def build_command(
         filters.append(f"{chain}[v{n}]")
         labels_v.append(f"[v{n}]")
         if plan.has_audio:
+            seg_duration = seg.end - seg.start
+            fade = min(AUDIO_FADE_SECONDS, seg_duration / 4)
+            fade_out_at = round(max(0.0, seg_duration - fade), 3)
             filters.append(
-                f"[0:a]atrim=start={seg.start}:end={seg.end},asetpts=PTS-STARTPTS[a{n}]"
+                f"[0:a]atrim=start={seg.start}:end={seg.end},asetpts=PTS-STARTPTS"
+                f",afade=t=in:st=0:d={fade}"
+                f",afade=t=out:st={fade_out_at}:d={fade}[a{n}]"
             )
             labels_a.append(f"[a{n}]")
 

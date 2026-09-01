@@ -80,6 +80,13 @@ class CommandBuilding(unittest.TestCase):
         self.assertNotIn("trim=start=0.0:end=2.0", filter_arg)  # cut 区間は現れない
         self.assertIn("concat=n=2:v=1:a=1", filter_arg)
 
+    def test_audio_fades_at_joins(self):
+        # つなぎ目のクリック音対策: 各 keep 区間の入りと終わりにフェード
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertIn("afade=t=in:st=0:d=0.15", filter_arg)
+        self.assertIn("afade=t=out:st=2.85:d=0.15", filter_arg)  # 3 秒区間の終わり
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
