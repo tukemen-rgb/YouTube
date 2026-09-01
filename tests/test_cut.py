@@ -165,6 +165,9 @@ class RealCut(unittest.TestCase):
         plan = analyze(directory, self.source, AnalyzeParams())
         # 退屈な 2 区間(冒頭と真ん中)が cut、動きのある 2 区間が keep
         self.assertEqual(len(plan.keeps), 2)
+        # keep には盛り上がり度が付き、★ がどこか 1 区間に付く
+        self.assertTrue(all(s.excite is not None for s in plan.keeps))
+        self.assertEqual(sum("★" in s.reason for s in plan.keeps), 1)
         self.assertLess(plan.kept_seconds, plan.duration - 3.0)
         # 実行 → 出力の長さが残した秒数に近いこと
         manifest = cut(directory)
@@ -177,6 +180,16 @@ class RealCut(unittest.TestCase):
         self.assertAlmostEqual(out_duration, plan.kept_seconds, delta=0.6)
         self.assertTrue((directory / "out" / "render_manifest.json").is_file())
         self.assertEqual(manifest["plan_file"], "cutplan.json")
+
+    def test_target_seconds_trims_to_budget(self):
+        from videoyard.analyze import AnalyzeParams, analyze
+
+        directory = Path(self._tmp.name) / "prod_target"
+        directory.mkdir()
+        plan = analyze(directory, self.source,
+                       AnalyzeParams(target_seconds=3.0, chunk_seconds=2.0))
+        self.assertLessEqual(plan.kept_seconds, 3.0 + 2.0)
+        self.assertGreater(plan.kept_seconds, 0.0)
 
     def test_cut_rejects_changed_source(self):
         from videoyard.analyze import AnalyzeParams, analyze

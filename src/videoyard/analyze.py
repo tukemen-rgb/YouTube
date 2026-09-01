@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from videoyard.cutplan import CutPlan, PlanSegment
+from videoyard.excitement import range_score, score_source
 from videoyard.llm import OllamaTelopWriter, SceneBrief
 
 Interval = tuple[float, float]
@@ -52,10 +53,14 @@ class AnalyzeParams:
     min_still: float = 1.0        # 静止画とみなす最短秒数
     min_cut: float = 1.0          # これより短い退屈は切らない(細切れ防止)
     min_keep: float = 0.6         # これより短い残しは諦めて切る
+    target_seconds: float | None = None  # 指定すると盛り上がり度上位でこの尺に収める
+    chunk_seconds: float = 3.0    # 尺調整で切り出す最小の粒(秒)
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
             raise AnalyzeError(f"mode は {MODES} のどれか: {self.mode}")
+        if self.target_seconds is not None and self.target_seconds <= 0:
+            raise AnalyzeError("target_seconds は正の秒数")
 
 
 # ---- ffmpeg / ffprobe の呼び出し ------------------------------------------
@@ -214,35 +219,105 @@ def propose_segments(duration: float, static: list[Interval], silent: list[Inter
     return segments
 
 
-# ---- 盛り上がり候補(音量の代用値) --------------------------------------
+# ---- 盛り上がり度による印付けと尺調整 -------------------------------------
 
-_MEAN_VOLUME = re.compile(r"mean_volume:\s*(-?[0-9.]+)\s*dB")
-
-
-def measure_mean_volume(source: Path, start: float, end: float,
-                        ffmpeg: str = "ffmpeg") -> float | None:
-    result = subprocess.run(
-        [ffmpeg, "-hide_banner", "-nostdin",
-         "-ss", str(start), "-t", str(end - start), "-i", str(source),
-         "-vn", "-af", "volumedetect", "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
-    m = _MEAN_VOLUME.search(result.stderr)
-    return float(m.group(1)) if m else None
-
-
-def mark_highlight(segments: list[PlanSegment], volumes: dict[int, float]) -> list[PlanSegment]:
-    """平均音量が最大の keep に印をつける(音量は代用値であって理解ではない)。"""
-    if not volumes:
+def mark_highlight(segments: list[PlanSegment], scores: dict[int, float]) -> list[PlanSegment]:
+    """点数が最大の keep に印をつける。"""
+    if not scores:
         return segments
-    loudest = max(volumes, key=lambda i: volumes[i])
+    best = max(scores, key=lambda i: scores[i])
     out = []
     for i, seg in enumerate(segments):
-        if i == loudest:
-            out.append(seg.replaced(reason=seg.reason + " ★盛り上がり候補(平均音量が最大)"))
+        if i == best:
+            out.append(seg.replaced(reason=seg.reason + " ★盛り上がり候補(盛り上がり度が最大)"))
         else:
             out.append(seg)
     return out
+
+
+_SCENE_TELOP = re.compile(r"^シーン \d+$")
+
+
+def _renumber_scene_telops(segments: list[PlanSegment]) -> list[PlanSegment]:
+    """テンプレートのままのテロップ(シーン n)を並び順で振り直す。
+
+    尺調整で keep が割れたり消えたりした後も、番号が飛ばないように。
+    人や AI が書いた文言には触らない。"""
+    out = []
+    scene = 0
+    for seg in segments:
+        if seg.action == "keep" and _SCENE_TELOP.match(seg.telop):
+            scene += 1
+            out.append(seg.replaced(telop=f"シーン {scene}"))
+        else:
+            if seg.action == "keep":
+                scene += 1
+            out.append(seg)
+    return out
+
+
+def trim_to_target(segments: list[PlanSegment], scores: list[float],
+                   target_seconds: float, chunk_seconds: float = 3.0) -> list[PlanSegment]:
+    """盛り上がり度の高い部分から順に残し、合計を目標の尺に収める。
+
+    keep 区間を chunk_seconds 刻みの小片に割り、点数の高い小片から
+    目標秒数に達するまで採用する。採用されなかった部分は
+    「尺調整のため除外」と理由を付けて cut になる。時間順は変えない
+    (動画の流れを並べ替えない)。目標が現状より長ければ何もしない。
+    """
+    keeps = [s for s in segments if s.action == "keep"]
+    total = sum(s.end - s.start for s in keeps)
+    if target_seconds >= total:
+        return segments
+
+    chunks: list[tuple[float, float, float, PlanSegment]] = []  # (score, start, end, 親)
+    for seg in keeps:
+        cursor = seg.start
+        while cursor < seg.end - 1e-6:
+            end = min(seg.end, cursor + chunk_seconds)
+            if seg.end - end < chunk_seconds / 2:  # 端数は最後の小片に吸収
+                end = seg.end
+            chunks.append((range_score(scores, cursor, end), cursor, end, seg))
+            cursor = end
+
+    chosen: list[tuple[float, float, PlanSegment]] = []
+    remaining = target_seconds
+    for score, start, end, parent in sorted(chunks, key=lambda c: -c[0]):
+        if remaining <= 0:
+            break
+        chosen.append((start, end, parent))
+        remaining -= end - start
+    chosen.sort()
+    # 隣り合う採用小片は 1 区間にまとめる(不要な切れ目とフェードを作らない)
+    merged: list[tuple[float, float, PlanSegment]] = []
+    for start, end, parent in chosen:
+        if merged and merged[-1][2] is parent and start <= merged[-1][1] + 1e-6:
+            merged[-1] = (merged[-1][0], end, parent)
+        else:
+            merged.append((start, end, parent))
+    chosen = merged
+
+    out: list[PlanSegment] = []
+    for seg in segments:
+        if seg.action == "cut":
+            out.append(seg)
+            continue
+        cursor = seg.start
+        parts = [(s, e) for s, e, parent in chosen if parent is seg]
+        for start, end in parts:
+            if start > cursor + 1e-6:
+                out.append(PlanSegment(
+                    start=round(cursor, 3), end=round(start, 3), action="cut",
+                    reason="尺調整のため除外(盛り上がり度が低い)",
+                ))
+            out.append(seg.replaced(start=round(start, 3), end=round(end, 3)))
+            cursor = end
+        if cursor < seg.end - 1e-6:
+            out.append(PlanSegment(
+                start=round(cursor, 3), end=round(seg.end, 3), action="cut",
+                reason="尺調整のため除外(盛り上がり度が低い)",
+            ))
+    return _renumber_scene_telops(out)
 
 
 # ---- テロップ文言のローカル AI 下書き --------------------------------------
@@ -300,14 +375,22 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     silent = parse_silence(stderr, duration) if has_audio else []
     segments = propose_segments(duration, static, silent, params)
 
-    if has_audio:
-        volumes = {}
-        for i, seg in enumerate(segments):
-            if seg.action == "keep":
-                volume = measure_mean_volume(source, seg.start, seg.end, ffmpeg=ffmpeg)
-                if volume is not None:
-                    volumes[i] = volume
-        segments = mark_highlight(segments, volumes)
+    # 盛り上がり度: 動き(+音があれば音量・音の立ち上がり)の測定から
+    # 窓ごとの点数を作り、keep 区間へ注釈する。
+    scores = score_source(source, duration, has_audio, ffmpeg=ffmpeg)
+    if params.target_seconds is not None:
+        segments = trim_to_target(
+            segments, scores, params.target_seconds, params.chunk_seconds
+        )
+    keep_scores = {
+        i: range_score(scores, seg.start, seg.end)
+        for i, seg in enumerate(segments) if seg.action == "keep"
+    }
+    segments = [
+        seg.replaced(excite=round(keep_scores[i])) if i in keep_scores else seg
+        for i, seg in enumerate(segments)
+    ]
+    segments = mark_highlight(segments, keep_scores)
 
     if writer is not None:
         segments = draft_telops(segments, writer, hint)

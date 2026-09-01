@@ -40,6 +40,8 @@ class PlanSegment:
     action: str
     telop: str = ""
     reason: str = ""
+    #: 盛り上がり度 0〜100(動画内の相対値)。analyze が付ける。無くてもよい。
+    excite: int | None = None
 
     def __post_init__(self) -> None:
         _require(isinstance(self.start, (int, float)) and self.start >= 0, "start は 0 以上")
@@ -49,6 +51,11 @@ class PlanSegment:
         _require(isinstance(self.telop, str) and len(self.telop) <= MAX_TELOP_CHARS,
                  f"telop は {MAX_TELOP_CHARS} 文字以内")
         _require(isinstance(self.reason, str), "reason は文字列")
+        _require(
+            self.excite is None
+            or (isinstance(self.excite, int) and 0 <= self.excite <= 100),
+            "excite は 0〜100 の整数か無し",
+        )
 
     def replaced(self, **changes: object) -> "PlanSegment":
         return replace(self, **changes)  # type: ignore[arg-type]
@@ -61,6 +68,8 @@ class PlanSegment:
             data["telop"] = self.telop
         if self.reason:
             data["reason"] = self.reason
+        if self.excite is not None:
+            data["excite"] = self.excite
         return data
 
 
@@ -131,7 +140,7 @@ class CutPlan:
         _require(isinstance(raw_segments, list), "segments は配列")
         assert isinstance(raw_segments, list)
         segments = []
-        seg_known = {"start", "end", "action", "telop", "reason"}
+        seg_known = {"start", "end", "action", "telop", "reason", "excite"}
         for i, raw in enumerate(raw_segments):
             _require(isinstance(raw, dict), f"segments[{i}] はオブジェクト")
             seg_unknown = set(raw) - seg_known

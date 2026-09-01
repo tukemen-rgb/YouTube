@@ -77,6 +77,7 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
         min_still=args.min_still,
         min_cut=args.min_cut,
         min_keep=args.min_keep,
+        target_seconds=args.target_seconds,
     )
     llm_choice = args.llm or os.environ.get("VIDEOYARD_LLM", "none")
     writer = None
@@ -94,7 +95,8 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
           f"(keep {len(keeps)} 区間 / 全 {len(plan.segments)} 区間)")
     for seg in plan.segments:
         mark = "残す" if seg.action == "keep" else "切る"
-        print(f"  {seg.start:7.1f}〜{seg.end:7.1f}  {mark}  {seg.reason}")
+        excite = f" 盛り上がり度{seg.excite:3d}" if seg.excite is not None else ""
+        print(f"  {seg.start:7.1f}〜{seg.end:7.1f}  {mark}{excite}  {seg.reason}")
     print("\n案を直すなら cutplan.json を編集(action の keep/cut と telop は自由)。")
     print(f"確定したら: python -m videoyard cut {directory}")
     return 0
@@ -128,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     analyze_cmd.add_argument("--min-still", type=float, default=1.0)
     analyze_cmd.add_argument("--min-cut", type=float, default=1.0)
     analyze_cmd.add_argument("--min-keep", type=float, default=0.6)
+    analyze_cmd.add_argument("--target-seconds", type=float, default=None,
+                             help="指定すると盛り上がり度の高い部分から順に"
+                                  "この合計秒数へ収める(例: 60)")
     analyze_cmd.add_argument("--llm", choices=("none", "ollama"), default=None,
                              help="テロップ文言の下書きに使うローカルAI"
                                   "(既定: 環境変数 VIDEOYARD_LLM か none)")
