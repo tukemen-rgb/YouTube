@@ -113,17 +113,39 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
 
     plan = analyze(directory, args.source, params, writer=writer, hint=args.hint,
                    weights=weights, progress=show_progress)
-    keeps = plan.keeps
     print(f"カット計画の案: {directory / 'cutplan.json'}")
-    print(f"元動画 {plan.duration:.1f} 秒 → 残し {plan.kept_seconds:.1f} 秒"
-          f"(keep {len(keeps)} 区間 / 全 {len(plan.segments)} 区間)")
-    for seg in plan.segments:
-        mark = "残す" if seg.action == "keep" else "切る"
-        excite = f" 盛り上がり度{seg.excite:3d}" if seg.excite is not None else ""
-        print(f"  {seg.start:7.1f}〜{seg.end:7.1f}  {mark}{excite}  {seg.reason}")
+    for line in format_plan_report(plan):
+        print(line)
     print("\n案を直すなら cutplan.json を編集(action の keep/cut と telop は自由)。")
     print(f"確定したら: python -m videoyard cut {directory}")
     return 0
+
+
+#: 区間一覧をそのまま全部出す上限。これを超えたら要約表示(U4)。
+_REPORT_MAX_ROWS = 12
+
+
+def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
+    """カット計画の表示行。長い動画では全行を流さず要約する(U4)。"""
+    keeps = plan.keeps
+    lines = [
+        f"元動画 {plan.duration:.1f} 秒 → 残し {plan.kept_seconds:.1f} 秒"
+        f"(keep {len(keeps)} 区間 / 全 {len(plan.segments)} 区間)"
+    ]
+
+    def row(seg) -> str:
+        mark = "残す" if seg.action == "keep" else "切る"
+        excite = f" 盛り上がり度{seg.excite:3d}" if seg.excite is not None else ""
+        return f"  {seg.start:7.1f}〜{seg.end:7.1f}  {mark}{excite}  {seg.reason}"
+
+    if len(plan.segments) <= max_rows:
+        lines += [row(seg) for seg in plan.segments]
+        return lines
+    top = sorted(keeps, key=lambda s: (-(s.excite or 0), s.start))[:5]
+    lines.append(f"区間が多いので盛り上がり度の上位 {len(top)} 件だけ表示:")
+    lines += [row(seg) for seg in sorted(top, key=lambda s: s.start)]
+    lines.append(f"  …残り {len(plan.segments) - len(top)} 区間は cutplan.json を参照")
+    return lines
 
 
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
