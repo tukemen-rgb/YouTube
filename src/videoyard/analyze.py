@@ -40,6 +40,7 @@ from videoyard.excitement import (
     window_features,
 )
 from videoyard.llm import OllamaTelopWriter, SceneBrief
+from videoyard.sheet import sheet_path, write_sheet
 
 Interval = tuple[float, float]
 
@@ -478,6 +479,8 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     # 「AI の案そのまま」の控えと、窓ごとの測定値も残す。人が cutplan.json
     # を直したあと、案との差分が学習(learning.py)の教師データになる。
     plan.save(production_dir / "cutplan.proposed.json")
+    # JSON を触れない人向けの ○× 編集シート(U2)
+    sheet_path(production_dir).write_text(write_sheet(plan), encoding="utf-8")
     windows = {
         "window_seconds": WINDOW_SECONDS,
         "duration": duration,

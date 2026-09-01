@@ -23,7 +23,7 @@ from videoyard.cut import (
     TRANSITIONS,
     cut,
 )
-from videoyard.cutplan import CutPlanError
+from videoyard.cutplan import CutPlan, CutPlanError
 from videoyard.fonts import FontError
 from videoyard.intro import GameFacts, IntroError, build_timeline
 from videoyard.job import JobError, ProductionJob
@@ -37,6 +37,7 @@ from videoyard.learning import (
 )
 from videoyard.llm import LlmError, OllamaTelopWriter
 from videoyard.render import RenderError, render
+from videoyard.sheet import SheetError, apply_sheet, sheet_path, write_sheet
 from videoyard.thumbs import extract_thumbnails
 from videoyard.timeline import Scene, Timeline, TimelineError
 
@@ -121,8 +122,30 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     print(f"カット計画の案: {directory / 'cutplan.json'}")
     for line in format_plan_report(plan):
         print(line)
-    print("\n案を直すなら cutplan.json を編集(action の keep/cut と telop は自由)。")
+    print(f"\n案を直すなら {directory / 'cutplan.sheet.txt'} の ○× とテロップを"
+          "書き換えて:")
+    print(f"  python -m videoyard apply {directory}   # シートを計画に反映")
     print(f"確定したら: python -m videoyard cut {directory}")
+    return 0
+
+
+def cmd_apply(directory: Path, _args: argparse.Namespace) -> int:
+    plan = CutPlan.load(directory / "cutplan.json")
+    path = sheet_path(directory)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise SheetError(f"編集シートがない: {path}(先に analyze を実行)") from None
+    updated = apply_sheet(plan, text)
+    changed = sum(
+        1 for before, after in zip(plan.segments, updated.segments, strict=True)
+        if before != after
+    )
+    updated.save(directory / "cutplan.json")
+    path.write_text(write_sheet(updated), encoding="utf-8")  # 正規形に揃え直す
+    print(f"シートを反映した(変更 {changed} 区間)。"
+          f"残し合計 {updated.kept_seconds:.1f} 秒 / keep {len(updated.keeps)} 区間")
+    print(f"次: python -m videoyard cut {directory}")
     return 0
 
 
@@ -279,6 +302,10 @@ def main(argv: list[str] | None = None) -> int:
                            help="facts の JSON(見本: examples/facts-sample.json)")
     intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
 
+    apply_cmd = sub.add_parser("apply", help="○×編集シート(cutplan.sheet.txt)を計画に反映")
+    apply_cmd.add_argument("directory", type=Path)
+    apply_cmd.set_defaults(handler=lambda a: cmd_apply(a.directory, a))
+
     thumbs_cmd = sub.add_parser("thumbs", help="サムネ候補を作り直す(--text で文字入り)")
     thumbs_cmd.add_argument("directory", type=Path)
     thumbs_cmd.add_argument("--text", default="",
@@ -292,8 +319,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
-    except (TimelineError, RenderError, JobError, FontError,
-            AnalyzeError, CutPlanError, LlmError, LearningError, IntroError) as exc:
+    except (TimelineError, RenderError, JobError, FontError, AnalyzeError,
+            CutPlanError, LlmError, LearningError, IntroError, SheetError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
 
