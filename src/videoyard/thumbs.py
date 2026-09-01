@@ -22,10 +22,15 @@ from pathlib import Path
 
 from videoyard.cutplan import CutPlan
 from videoyard.excitement import combine_features
-from videoyard.render import RenderError
+from videoyard.fonts import resolve_font
+from videoyard.render import RenderError, _escape_filter_value, wrap_text
 
 DEFAULT_COUNT = 3
 MIN_GAP_SECONDS = 2.0
+
+#: サムネ文字の鉄則(C12): 大きく・少なく・縁取り。
+TITLE_MAX_CHARS = 20
+TITLE_FONT_RATIO = 0.16      # 画面高さに対する文字サイズ(動画テロップよりずっと大きい)
 
 
 class ThumbsError(RenderError):
@@ -55,8 +60,29 @@ def pick_thumbnail_times(
     return chosen
 
 
+def title_drawtext(text_path: Path, font_path: Path, width: int, height: int) -> str:
+    """サムネ用タイトル文字の drawtext。純粋関数(テストで検証)。
+
+    動画テロップと同じ安全経路(textfile + expansion=none)で、見た目は
+    サムネ用に大きく: 太い縁取り+半透明の帯、左下寄せ。
+    """
+    font_size = max(32, int(height * TITLE_FONT_RATIO))
+    return (
+        f"drawtext=fontfile={_escape_filter_value(str(font_path))}"
+        f":textfile={_escape_filter_value(str(text_path))}"
+        ":expansion=none"
+        ":fontcolor=0xffffff"
+        f":fontsize={font_size}"
+        f":line_spacing={font_size // 5}"
+        f":borderw={max(3, font_size // 12)}:bordercolor=0x000000"
+        ":box=1:boxcolor=0x000000@0.35"
+        f":boxborderw={max(10, font_size // 4)}"
+        f":x={max(20, width // 24)}:y=h-text_h-{max(20, height // 12)}"
+    )
+
+
 def extract_thumbnails(production_dir: Path, count: int = DEFAULT_COUNT,
-                       ffmpeg: str = "ffmpeg") -> list[Path]:
+                       text: str = "", ffmpeg: str = "ffmpeg") -> list[Path]:
     """cutplan と分析結果からサムネ候補を out/thumbnails/ に書く。"""
     windows_path = production_dir / "analysis_windows.json"
     if not windows_path.is_file():
@@ -78,6 +104,20 @@ def extract_thumbnails(production_dir: Path, count: int = DEFAULT_COUNT,
 
     out_dir = production_dir / "out" / "thumbnails"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    title_args: list[str] = []
+    if text:
+        if len(text) > TITLE_MAX_CHARS:
+            raise ThumbsError(
+                f"サムネ文字は {TITLE_MAX_CHARS} 文字以内(大きく・少なくが鉄則)。"
+                f"{len(text)} 文字は多すぎる。"
+            )
+        font_path = resolve_font()
+        font_size = max(32, int(plan.height * TITLE_FONT_RATIO))
+        text_path = out_dir / "title.txt"
+        text_path.write_text(wrap_text(text, font_size, plan.width), encoding="utf-8")
+        title_args = ["-vf", title_drawtext(text_path, font_path, plan.width, plan.height)]
+
     written: list[Path] = []
     records = []
     for rank, (time, score) in enumerate(picks, start=1):
@@ -92,8 +132,22 @@ def extract_thumbnails(production_dir: Path, count: int = DEFAULT_COUNT,
             tail = "\n".join(result.stderr.splitlines()[-5:])
             raise ThumbsError(f"フレーム抽出が失敗(t={time:.1f}s):\n{tail}")
         written.append(path)
-        records.append({"rank": rank, "time_seconds": round(time, 3),
-                        "excite": round(score), "file": path.name})
+        record = {"rank": rank, "time_seconds": round(time, 3),
+                  "excite": round(score), "file": path.name}
+        if title_args:
+            titled = out_dir / f"thumb_{rank}_titled.png"
+            result = subprocess.run(
+                [ffmpeg, "-hide_banner", "-nostdin", "-y",
+                 "-i", str(path), *title_args, str(titled)],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0 or not titled.is_file():
+                tail = "\n".join(result.stderr.splitlines()[-5:])
+                raise ThumbsError(f"タイトル文字の合成が失敗:\n{tail}")
+            written.append(titled)
+            record["titled_file"] = titled.name
+            record["title_text"] = text
+        records.append(record)
     (out_dir / "thumbnails.json").write_text(
         json.dumps({"source_sha256": plan.source_sha256, "candidates": records},
                    ensure_ascii=False, indent=2, sort_keys=True) + "\n",

@@ -35,6 +35,19 @@ class Picking(unittest.TestCase):
         self.assertEqual(pick_thumbnail_times([50.0], [], window=1.0), [])
 
 
+class TitleStyle(unittest.TestCase):
+    def test_drawtext_is_safe_and_bold(self):
+        from pathlib import Path
+
+        from videoyard.thumbs import title_drawtext
+        f = title_drawtext(Path("/t.txt"), Path("/f.ttc"), 1280, 720)
+        self.assertIn("expansion=none", f)   # 文字は命令にならない
+        self.assertIn("textfile=", f)
+        self.assertIn("borderw=", f)         # 縁取り(C12)
+        self.assertIn("boxcolor=0x000000@0.35", f)  # 半透明の帯
+        self.assertIn(f"fontsize={int(720 * 0.16)}", f)  # 大きな文字
+
+
 @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg が無い環境ではスキップ")
 class RealExtraction(unittest.TestCase):
     def test_thumbnails_written_with_provenance(self):
@@ -70,6 +83,14 @@ class RealExtraction(unittest.TestCase):
             )
             self.assertEqual(len(meta["candidates"]), len(written))
             self.assertIn("time_seconds", meta["candidates"][0])
+
+            # 文字入り版(C5): --text 相当で titled ファイルが増える
+            from videoyard.thumbs import ThumbsError
+            titled = extract_thumbnails(directory, count=1, text="神プレイ集")
+            names = [p.name for p in titled]
+            self.assertIn("thumb_1_titled.png", names)
+            with self.assertRaises(ThumbsError):
+                extract_thumbnails(directory, count=1, text="あ" * 21)  # 文字数超過
 
 
 if __name__ == "__main__":

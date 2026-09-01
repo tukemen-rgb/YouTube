@@ -175,6 +175,20 @@ def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     if thumbnails:
         print(f"サムネイル候補 {len(thumbnails)} 枚: {thumbnails[0].parent}"
               "(盛り上がり度上位の瞬間。thumbnails.json に選定理由)")
+        print("次の一手: 文字入りサムネは "
+              f"python -m videoyard thumbs {directory} --text 'タイトル' / "
+              "動画の確認は out/video.mp4")
+    return 0
+
+
+def cmd_thumbs(directory: Path, args: argparse.Namespace) -> int:
+    written = extract_thumbnails(directory, count=args.count, text=args.text)
+    if not written:
+        print("サムネ候補を作れなかった(analyze → cut を先に実行すること)")
+        return 1
+    print(f"サムネイル {len(written)} 枚: {written[0].parent}")
+    for path in written:
+        print(f"  {path.name}")
     return 0
 
 
@@ -264,6 +278,13 @@ def main(argv: list[str] | None = None) -> int:
     intro_cmd.add_argument("--facts", type=Path, required=True,
                            help="facts の JSON(見本: examples/facts-sample.json)")
     intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
+
+    thumbs_cmd = sub.add_parser("thumbs", help="サムネ候補を作り直す(--text で文字入り)")
+    thumbs_cmd.add_argument("directory", type=Path)
+    thumbs_cmd.add_argument("--text", default="",
+                            help="サムネに重ねるタイトル文字(20 文字以内。大きく・少なくが鉄則)")
+    thumbs_cmd.add_argument("--count", type=int, default=3)
+    thumbs_cmd.set_defaults(handler=lambda a: cmd_thumbs(a.directory, a))
 
     learn_cmd = sub.add_parser("learn", help="貯まった添削から採点基準を学習し直す")
     learn_cmd.set_defaults(handler=cmd_learn)
