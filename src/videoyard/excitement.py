@@ -22,15 +22,23 @@ from __future__ import annotations
 
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 #: 集計の窓幅(秒)。細かすぎるとノイズを拾い、粗すぎると山がなまる。
 WINDOW_SECONDS = 0.5
 
-#: 合成の重み。動き > 音量 > 音の立ち上がり。
-WEIGHT_MOTION = 0.5
-WEIGHT_LOUDNESS = 0.3
-WEIGHT_ONSET = 0.2
+
+@dataclass(frozen=True)
+class ScoreWeights:
+    """3 つの測定値の合成の重み。学習(learning.py)で差し替えられる。"""
+
+    motion: float = 0.5
+    loudness: float = 0.3
+    onset: float = 0.2
+
+
+DEFAULT_WEIGHTS = ScoreWeights()
 
 #: 無音(-inf dB)の代わりに使う床の値。
 SILENCE_FLOOR_DB = -90.0
@@ -126,16 +134,27 @@ def onsets(loudness: list[float]) -> list[float]:
     return out
 
 
-def combine_scores(motion: list[float], loudness: list[float] | None) -> list[float]:
-    """窓ごとの盛り上がり度 0〜100。loudness が無ければ動きだけで作る。"""
-    z_motion = zscores(motion)
-    if loudness is None:
-        raw = z_motion
+def window_features(motion: list[float],
+                    loudness: list[float] | None) -> dict[str, list[float] | None]:
+    """窓ごとの標準化済み特徴量。学習の入力と同じ形で保存もされる。"""
+    return {
+        "motion": zscores(motion),
+        "loudness": zscores(loudness) if loudness is not None else None,
+        "onset": zscores(onsets(loudness)) if loudness is not None else None,
+    }
+
+
+def combine_features(features: dict[str, list[float] | None],
+                     weights: ScoreWeights = DEFAULT_WEIGHTS) -> list[float]:
+    """特徴量 → 窓ごとの盛り上がり度 0〜100。音が無ければ動きだけで作る。"""
+    z_motion = features["motion"] or []
+    z_loud = features["loudness"]
+    z_onset = features["onset"]
+    if z_loud is None or z_onset is None:
+        raw = [weights.motion * m for m in z_motion]
     else:
-        z_loud = zscores(loudness)
-        z_onset = zscores(onsets(loudness))
         raw = [
-            WEIGHT_MOTION * m + WEIGHT_LOUDNESS * l + WEIGHT_ONSET * o
+            weights.motion * m + weights.loudness * l + weights.onset * o
             for m, l, o in zip(z_motion, z_loud, z_onset)
         ]
     if not raw:
@@ -144,6 +163,12 @@ def combine_scores(motion: list[float], loudness: list[float] | None) -> list[fl
     if high - low < 1e-9:
         return [50.0] * len(raw)
     return [(v - low) / (high - low) * 100.0 for v in raw]
+
+
+def combine_scores(motion: list[float], loudness: list[float] | None,
+                   weights: ScoreWeights = DEFAULT_WEIGHTS) -> list[float]:
+    """生の測定値 → 盛り上がり度。window_features + combine_features の近道。"""
+    return combine_features(window_features(motion, loudness), weights)
 
 
 def range_score(scores: list[float], start: float, end: float,
@@ -158,11 +183,13 @@ def range_score(scores: list[float], start: float, end: float,
 
 
 def score_source(source: Path, duration: float, has_audio: bool,
-                 ffmpeg: str = "ffmpeg") -> list[float]:
-    """元動画 → 窓ごとの盛り上がり度。測定 1〜2 パスで済む。"""
+                 weights: ScoreWeights = DEFAULT_WEIGHTS, ffmpeg: str = "ffmpeg",
+                 ) -> tuple[list[float], dict[str, list[float] | None]]:
+    """元動画 → (窓ごとの盛り上がり度, 特徴量)。測定 1〜2 パスで済む。"""
     motion = bucketize(measure_motion(source, ffmpeg=ffmpeg), duration)
     loudness = (
         bucketize(measure_loudness(source, ffmpeg=ffmpeg), duration)
         if has_audio else None
     )
-    return combine_scores(motion, loudness)
+    features = window_features(motion, loudness)
+    return combine_features(features, weights), features

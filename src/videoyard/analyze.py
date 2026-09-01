@@ -28,7 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from videoyard.cutplan import CutPlan, PlanSegment
-from videoyard.excitement import range_score, score_source
+from videoyard.excitement import (
+    WINDOW_SECONDS,
+    ScoreWeights,
+    range_score,
+    score_source,
+)
 from videoyard.llm import OllamaTelopWriter, SceneBrief
 
 Interval = tuple[float, float]
@@ -356,6 +361,7 @@ def draft_telops(segments: list[PlanSegment], writer: OllamaTelopWriter,
 
 def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
             writer: OllamaTelopWriter | None = None, hint: str = "",
+            weights: ScoreWeights | None = None,
             ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> CutPlan:
     """元動画を分析し、cutplan.json の案を production_dir に書く。"""
     info = probe_source(source, ffprobe=ffprobe)
@@ -376,8 +382,12 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     segments = propose_segments(duration, static, silent, params)
 
     # 盛り上がり度: 動き(+音があれば音量・音の立ち上がり)の測定から
-    # 窓ごとの点数を作り、keep 区間へ注釈する。
-    scores = score_source(source, duration, has_audio, ffmpeg=ffmpeg)
+    # 窓ごとの点数を作り、keep 区間へ注釈する。重みは学習済みのものが
+    # 渡されればそれを、無ければ既定を使う。
+    scores, features = score_source(
+        source, duration, has_audio,
+        weights=weights or ScoreWeights(), ffmpeg=ffmpeg,
+    )
     if params.target_seconds is not None:
         segments = trim_to_target(
             segments, scores, params.target_seconds, params.chunk_seconds
@@ -409,4 +419,16 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
         segments=tuple(segments),
     )
     plan.save(production_dir / "cutplan.json")
+    # 「AI の案そのまま」の控えと、窓ごとの測定値も残す。人が cutplan.json
+    # を直したあと、案との差分が学習(learning.py)の教師データになる。
+    plan.save(production_dir / "cutplan.proposed.json")
+    windows = {
+        "window_seconds": WINDOW_SECONDS,
+        "duration": duration,
+        "features": features,
+    }
+    (production_dir / "analysis_windows.json").write_text(
+        json.dumps(windows, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return plan

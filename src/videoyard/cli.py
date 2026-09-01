@@ -19,6 +19,14 @@ from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
 from videoyard.cut import cut
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
+from videoyard.learning import (
+    LearningError,
+    load_examples,
+    load_weights,
+    record_feedback,
+    save_weights,
+    train,
+)
 from videoyard.llm import LlmError, OllamaTelopWriter
 from videoyard.job import JobError, ProductionJob
 from videoyard.render import RenderError, render
@@ -88,7 +96,14 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
         )
     elif llm_choice != "none":
         raise LlmError(f"知らない LLM 指定: {llm_choice}(none / ollama)")
-    plan = analyze(directory, args.source, params, writer=writer, hint=args.hint)
+    learned = load_weights()
+    weights = None
+    if learned is not None:
+        weights, meta = learned
+        print(f"学習済みの採点基準を使用({meta.get('examples')} 件の添削から "
+              f"{meta.get('trained_at')} に学習)")
+    plan = analyze(directory, args.source, params, writer=writer, hint=args.hint,
+                   weights=weights)
     keeps = plan.keeps
     print(f"カット計画の案: {directory / 'cutplan.json'}")
     print(f"元動画 {plan.duration:.1f} 秒 → 残し {plan.kept_seconds:.1f} 秒"
@@ -108,6 +123,22 @@ def cmd_cut(directory: Path, _args: argparse.Namespace) -> int:
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     print(f"長さ: {manifest['duration_seconds']:.1f} 秒 / {manifest['output_bytes']} バイト")
+    recorded = record_feedback(directory)
+    if recorded:
+        print(f"添削 {recorded} 窓ぶんを学習用に記録した"
+              "(貯まったら python -m videoyard learn)")
+    return 0
+
+
+def cmd_learn(_args: argparse.Namespace) -> int:
+    examples = load_examples()
+    weights, accuracy = train(examples)
+    path = save_weights(weights, len(examples), accuracy)
+    print(f"学習完了: {len(examples)} 件の添削 → {path}")
+    print(f"訓練データ上の的中率: {accuracy:.0%}")
+    print(f"新しい重み: 動き={weights.motion:+.2f} 音量={weights.loudness:+.2f} "
+          f"立ち上がり={weights.onset:+.2f}")
+    print("次回の analyze から自動で使われる。weights.json を消せば既定に戻る。")
     return 0
 
 
@@ -149,11 +180,14 @@ def main(argv: list[str] | None = None) -> int:
     cut_cmd.add_argument("directory", type=Path)
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
+    learn_cmd = sub.add_parser("learn", help="貯まった添削から採点基準を学習し直す")
+    learn_cmd.set_defaults(handler=cmd_learn)
+
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
     except (TimelineError, RenderError, JobError, FontError,
-            AnalyzeError, CutPlanError, LlmError) as exc:
+            AnalyzeError, CutPlanError, LlmError, LearningError) as exc:
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
 
