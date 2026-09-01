@@ -37,6 +37,14 @@ TELOP_MAX_HEIGHT_RATIO = 0.3   # テロップが占めてよい高さ
 #: (ゲーム動画の標準的な編集)。
 AUDIO_FADE_SECONDS = 0.15
 
+#: 書き出し時に揃えるラウドネス(LUFS)。YouTube は再生時に約 -14 LUFS
+#: へ音量を合わせるため、これより大きい音は自動で下げられ、小さい音は
+#: 小さいまま再生される。書き出しで揃えておけば動画ごとの音量のばらつき
+#: が出ない。1 パスの loudnorm は固定パラメータなので決定的。
+LOUDNESS_TARGET_LUFS = -14.0
+LOUDNESS_TRUE_PEAK = -1.5
+LOUDNESS_RANGE = 11.0
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -89,6 +97,7 @@ def build_command(
     font_path: Path,
     telop_paths: dict[int, Path],
     output_path: Path,
+    normalize_loudness: bool = True,
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
@@ -118,16 +127,25 @@ def build_command(
             labels_a.append(f"[a{n}]")
 
     n = len(keep_indexes)
+    audio_label = "[outa]"
     if plan.has_audio:
         pairs = "".join(v + a for v, a in zip(labels_v, labels_a, strict=True))
         filters.append(f"{pairs}concat=n={n}:v=1:a=1[outv][outa]")
+        if normalize_loudness:
+            # loudnorm は内部で 192kHz 化するので、通常のレートへ戻す。
+            filters.append(
+                f"[outa]loudnorm=I={LOUDNESS_TARGET_LUFS}"
+                f":TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
+                ",aresample=48000[outn]"
+            )
+            audio_label = "[outn]"
     else:
         filters.append(f"{''.join(labels_v)}concat=n={n}:v=1:a=0[outv]")
 
     args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(source),
             "-filter_complex", ";".join(filters), "-map", "[outv]"]
     if plan.has_audio:
-        args += ["-map", "[outa]", "-c:a", "aac", "-b:a", "192k"]
+        args += ["-map", audio_label, "-c:a", "aac", "-b:a", "192k"]
     args += [
         "-c:v", "libx264",
         "-preset", "medium",
@@ -142,7 +160,8 @@ def build_command(
     return args
 
 
-def cut(production_dir: Path, ffmpeg: str = "ffmpeg") -> dict[str, object]:
+def cut(production_dir: Path, normalize_loudness: bool = True,
+        ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
@@ -165,7 +184,8 @@ def cut(production_dir: Path, ffmpeg: str = "ffmpeg") -> dict[str, object]:
     tmp_path = out_dir / "video.tmp.mp4"
     tmp_path.unlink(missing_ok=True)
 
-    args = build_command(plan, source, font_path, telop_paths, tmp_path, ffmpeg=ffmpeg)
+    args = build_command(plan, source, font_path, telop_paths, tmp_path,
+                         normalize_loudness=normalize_loudness, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)

@@ -87,6 +87,18 @@ class CommandBuilding(unittest.TestCase):
         self.assertIn("afade=t=in:st=0:d=0.15", filter_arg)
         self.assertIn("afade=t=out:st=2.85:d=0.15", filter_arg)  # 3 秒区間の終わり
 
+    def test_loudness_normalized_by_default(self):
+        # YouTube の実効基準(約 -14 LUFS)へ書き出しで揃える(C6)
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertIn("loudnorm=I=-14.0", filter_arg)
+        self.assertIn("[outn]", args)  # 正規化後の音声を書き出す
+
+    def test_loudnorm_can_be_disabled(self):
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             normalize_loudness=False)
+        self.assertNotIn("loudnorm", args[args.index("-filter_complex") + 1])
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))

@@ -126,9 +126,9 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cut(directory: Path, _args: argparse.Namespace) -> int:
+def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
-    manifest = cut(directory)
+    manifest = cut(directory, normalize_loudness=not args.no_loudnorm)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     print(f"長さ: {manifest['duration_seconds']:.1f} 秒 / {manifest['output_bytes']} バイト")
@@ -208,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cut_cmd = sub.add_parser("cut", help="cutplan.json のとおりに切ってつなぐ")
     cut_cmd.add_argument("directory", type=Path)
+    cut_cmd.add_argument("--no-loudnorm", action="store_true",
+                         help="音量の正規化(YouTube 基準 -14 LUFS)を行わない")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")
