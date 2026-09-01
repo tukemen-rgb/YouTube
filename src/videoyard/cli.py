@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
@@ -105,8 +106,13 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
         weights, meta = learned
         print(f"学習済みの採点基準を使用({meta.get('examples')} 件の添削から "
               f"{meta.get('trained_at')} に学習)")
+    started = time.monotonic()
+
+    def show_progress(message: str) -> None:
+        print(f"[{time.monotonic() - started:4.0f}秒] {message}", flush=True)
+
     plan = analyze(directory, args.source, params, writer=writer, hint=args.hint,
-                   weights=weights)
+                   weights=weights, progress=show_progress)
     keeps = plan.keeps
     print(f"カット計画の案: {directory / 'cutplan.json'}")
     print(f"元動画 {plan.duration:.1f} 秒 → 残し {plan.kept_seconds:.1f} 秒"

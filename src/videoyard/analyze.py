@@ -24,6 +24,7 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -393,8 +394,18 @@ def draft_telops(segments: list[PlanSegment], writer: OllamaTelopWriter,
 def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
             writer: OllamaTelopWriter | None = None, hint: str = "",
             weights: ScoreWeights | None = None,
+            progress: Callable[[str], None] | None = None,
             ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> CutPlan:
-    """元動画を分析し、cutplan.json の案を production_dir に書く。"""
+    """元動画を分析し、cutplan.json の案を production_dir に書く。
+
+    progress を渡すと工程の節目ごとに一行ずつ知らせる。長い動画では
+    測定に数分かかるため、無言だと固まったように見える(U1)。
+    """
+    def report(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
+    report("元動画を確認中…")
     info = probe_source(source, ffprobe=ffprobe)
     has_audio = bool(info["has_audio"])
     if not has_audio and params.mode not in ("static_only",):
@@ -406,11 +417,15 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
             min_still=params.min_still, min_cut=params.min_cut,
             min_keep=params.min_keep,
         )
+    report("静止画・無音の区間を検出中…")
     stderr = run_detection(source, params, has_audio, ffmpeg=ffmpeg)
     duration = float(info["duration"])  # type: ignore[arg-type]
 
     # 動き・音量の測定は 1 回だけ行い、静止判定と盛り上がり度の両方に使う。
+    report("動きの激しさを測定中…")
     motion = bucketize(measure_motion(source, ffmpeg=ffmpeg), duration)
+    if has_audio:
+        report("音量を測定中…")
     loudness = (
         bucketize(measure_loudness(source, ffmpeg=ffmpeg), duration)
         if has_audio else None
@@ -425,6 +440,7 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
 
     # 盛り上がり度: 測定済みの特徴量から窓ごとの点数を作り、keep 区間へ
     # 注釈する。重みは学習済みのものが渡されればそれを、無ければ既定。
+    report("盛り上がり度を採点中…")
     features = window_features(motion, loudness)
     scores = combine_features(features, weights or ScoreWeights())
     if params.target_seconds is not None:
@@ -442,6 +458,7 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     segments = mark_highlight(segments, keep_scores)
 
     if writer is not None:
+        report("テロップの下書きをローカル AI に依頼中…")
         segments = draft_telops(segments, writer, hint)
 
     digest = hashlib.sha256(source.read_bytes()).hexdigest()

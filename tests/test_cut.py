@@ -180,6 +180,18 @@ class RealCut(unittest.TestCase):
         self.assertTrue((directory / "out" / "render_manifest.json").is_file())
         self.assertEqual(manifest["plan_file"], "cutplan.json")
 
+    def test_analyze_reports_progress(self):
+        from videoyard.analyze import AnalyzeParams, analyze
+
+        directory = Path(self._tmp.name) / "prod_progress"
+        directory.mkdir()
+        messages: list[str] = []
+        analyze(directory, self.source, AnalyzeParams(), progress=messages.append)
+        # 工程の節目が順に知らされる(無言で数分待たせない: U1)
+        self.assertGreaterEqual(len(messages), 4)
+        self.assertIn("確認中", messages[0])
+        self.assertTrue(any("測定中" in m for m in messages))
+
     def test_target_seconds_trims_to_budget(self):
         from videoyard.analyze import AnalyzeParams, analyze
 
