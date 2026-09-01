@@ -56,6 +56,11 @@ SHORTS_RECOMMENDED_SECONDS = 60.0
 BGM_DEFAULT_GAIN_DB = -16.0
 BGM_FADE_OUT_SECONDS = 1.5
 
+#: 場面転換の種類(C3)。既定はハードカット(C11: 全部に演出を入れると
+#: うるさい)。"dip" はつなぎ目で短く暗転する。
+TRANSITIONS = ("none", "dip")
+VIDEO_FADE_SECONDS = 0.15
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -113,9 +118,12 @@ def build_command(
     fast: bool = False,
     bgm: Path | None = None,
     bgm_gain_db: float = -16.0,
+    transition: str = "none",
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
+    if transition not in TRANSITIONS:
+        raise CutError(f"transition は {TRANSITIONS} のどれか: {transition}")
     keep_indexes = [i for i, s in enumerate(plan.segments) if s.action == "keep"]
     if not keep_indexes:
         raise CutError("keep の区間が無い")
@@ -128,6 +136,16 @@ def build_command(
         chain = f"[0:v]trim=start={seg.start}:end={seg.end},setpts=PTS-STARTPTS"
         if index in telop_paths:
             chain += "," + _drawtext(seg, plan, font_path, telop_paths[index])
+        if transition == "dip" and len(keep_indexes) > 1:
+            # 暗転つなぎ: つなぎ目側だけフェード。冒頭のフェードインと
+            # 末尾のフェードアウトは入れない(動画の頭と尻は演出しない)。
+            seg_duration = seg.end - seg.start
+            fade = min(VIDEO_FADE_SECONDS, seg_duration / 4)
+            if n > 0:
+                chain += f",fade=t=in:st=0:d={fade}"
+            if n < len(keep_indexes) - 1:
+                fade_out_at = round(max(0.0, seg_duration - fade), 3)
+                chain += f",fade=t=out:st={fade_out_at}:d={fade}"
         filters.append(f"{chain}[v{n}]")
         labels_v.append(f"[v{n}]")
         if plan.has_audio:
@@ -221,7 +239,7 @@ def build_command(
 def cut(production_dir: Path, normalize_loudness: bool = True,
         vertical: bool = False, fast: bool = False,
         bgm: Path | None = None, bgm_gain_db: float = BGM_DEFAULT_GAIN_DB,
-        ffmpeg: str = "ffmpeg") -> dict[str, object]:
+        transition: str = "none", ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
@@ -248,7 +266,8 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         raise CutError(f"BGM ファイルがない: {bgm}")
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
                          normalize_loudness=normalize_loudness, vertical=vertical,
-                         fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db, ffmpeg=ffmpeg)
+                         fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db,
+                         transition=transition, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -276,6 +295,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "bgm_path": str(bgm) if bgm is not None else "",
         "bgm_sha256": _sha256(bgm) if bgm is not None else "",
         "bgm_gain_db": bgm_gain_db if bgm is not None else None,
+        "transition": transition,
         "command": args,
     }
     tmp_path.replace(final_path)

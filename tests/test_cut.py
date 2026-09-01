@@ -143,6 +143,29 @@ class CommandBuilding(unittest.TestCase):
         self.assertNotIn("amix", filter_arg)   # 混ぜる相手がいない
         self.assertIn("-c:a", args)            # BGM が唯一の音声になる
 
+    def test_dip_transition_fades_only_at_joins(self):
+        # 暗転つなぎ(C3): つなぎ目だけフェード。冒頭と末尾は演出しない
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                             transition="dip")
+        filter_arg = args[args.index("-filter_complex") + 1]
+        chains = [c for c in filter_arg.split(";") if c.startswith("[0:v]")]
+        self.assertEqual(len(chains), 2)  # keep 2 区間
+        self.assertNotIn("fade=t=in", chains[0])   # 最初の区間は頭フェードなし
+        self.assertIn("fade=t=out", chains[0])     # つなぎ目へ向けて暗転
+        self.assertIn("fade=t=in", chains[1])      # つなぎ目から明転
+        self.assertNotIn("fade=t=out", chains[1])  # 最後の区間は尻フェードなし
+
+    def test_default_transition_is_hard_cut(self):
+        args = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        video_chains = [c for c in filter_arg.split(";") if c.startswith("[0:v]")]
+        self.assertTrue(all("fade" not in c for c in video_chains))
+
+    def test_unknown_transition_rejected(self):
+        with self.assertRaises(CutError):
+            build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"),
+                          transition="wipe")
+
     def test_no_audio_concat_video_only(self):
         plan = _plan(has_audio=False)
         args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))

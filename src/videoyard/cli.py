@@ -17,7 +17,12 @@ import time
 from pathlib import Path
 
 from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
-from videoyard.cut import BGM_DEFAULT_GAIN_DB, SHORTS_RECOMMENDED_SECONDS, cut
+from videoyard.cut import (
+    BGM_DEFAULT_GAIN_DB,
+    SHORTS_RECOMMENDED_SECONDS,
+    TRANSITIONS,
+    cut,
+)
 from videoyard.cutplan import CutPlanError
 from videoyard.fonts import FontError
 from videoyard.intro import GameFacts, IntroError, build_timeline
@@ -152,7 +157,8 @@ def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
     manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
                    vertical=args.vertical, fast=args.fast,
-                   bgm=args.bgm, bgm_gain_db=args.bgm_db)
+                   bgm=args.bgm, bgm_gain_db=args.bgm_db,
+                   transition=args.transition)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     if args.vertical:
@@ -249,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
                               "(短ければループ、末尾フェードアウト)")
     cut_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB,
                          help="BGM の音量(dB、既定 -16)")
+    cut_cmd.add_argument("--transition", choices=TRANSITIONS, default="none",
+                         help="場面転換: none=ハードカット(既定) / dip=短い暗転")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")
