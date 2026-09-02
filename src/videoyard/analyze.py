@@ -359,6 +359,42 @@ def trim_to_target(segments: list[PlanSegment], scores: list[float],
     return _renumber_scene_telops(out)
 
 
+# ---- 分析結果の自己診断(U13) --------------------------------------------
+
+def diagnose(plan: CutPlan, params: AnalyzeParams, has_audio: bool) -> list[str]:
+    """「この結果は変では?」への気づきと、回すべきノブの提案。純粋関数。
+
+    診断は助言であって判断ではない。計画は人が直す(いつもの分担)。
+    """
+    advice: list[str] = []
+    kept_ratio = plan.kept_seconds / plan.duration if plan.duration else 1.0
+    if kept_ratio < 0.2:
+        advice.append(
+            f"切りすぎかもしれない(残し {kept_ratio:.0%})。BGM や環境音で"
+            "「無音」判定が広がっている可能性: --mode static_and_silent か "
+            "--silence-db -45 を試す。"
+        )
+    elif kept_ratio > 0.95 and len(plan.segments) <= 1:
+        advice.append(
+            f"ほぼ何も切れていない(残し {kept_ratio:.0%})。常に音が鳴る録画なら "
+            "--silence-db -25 で無音判定を強める、静止の取りこぼしなら "
+            "--near-still-ydif 0.5 を試す。"
+        )
+    if not has_audio and params.mode != "static_only":
+        advice.append(
+            "音声が無いため判定を静止画のみに切り替えた。無音カットは"
+            "働いていない。"
+        )
+    tiny_keeps = [s for s in plan.keeps if s.end - s.start < 2.0]
+    if len(tiny_keeps) >= 3 and len(tiny_keeps) >= len(plan.keeps) / 2:
+        advice.append(
+            f"2 秒未満の細切れ keep が {len(tiny_keeps)} 個ある。忙しない"
+            "動画になりやすい: --min-cut 2.0 で退屈判定を粗くするか、"
+            "シートで隣とまとめて切る。"
+        )
+    return advice
+
+
 # ---- テロップ文言のローカル AI 下書き --------------------------------------
 
 def draft_telops(segments: list[PlanSegment], writer: OllamaTelopWriter,

@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze
+from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze, diagnose
 from videoyard.cut import (
     BGM_DEFAULT_GAIN_DB,
     SHORTS_RECOMMENDED_SECONDS,
@@ -125,6 +125,8 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     print(f"盛り上がりグラフ: {directory / 'excitement.svg'}(ブラウザで開ける)")
     for line in format_plan_report(plan):
         print(line)
+    for advice in diagnose(plan, params, plan.has_audio):
+        print(f"診断: {advice}")
     print(f"\n案を直すなら {directory / 'cutplan.sheet.txt'} の ○× とテロップを"
           "書き換えて:")
     print(f"  python -m videoyard apply {directory}   # シートを計画に反映")
@@ -233,7 +235,10 @@ def cmd_intro(directory: Path, args: argparse.Namespace) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     if not (directory / "job.json").is_file():
         ProductionJob.create(directory, title=f"{facts.name} の紹介動画")
-    timeline = build_timeline(facts)
+    if args.vertical:
+        timeline = build_timeline(facts, width=1080, height=1920)
+    else:
+        timeline = build_timeline(facts)
     timeline.save(directory / "timeline.json")
     print(f"紹介動画のタイムライン: {directory / 'timeline.json'}")
     print(f"シーン {len(timeline.scenes)} 個 / 合計 {timeline.total_seconds:.1f} 秒")
@@ -316,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     intro_cmd.add_argument("directory", type=Path)
     intro_cmd.add_argument("--facts", type=Path, required=True,
                            help="facts の JSON(見本: examples/facts-sample.json)")
+    intro_cmd.add_argument("--vertical", action="store_true",
+                           help="ショート用の縦(1080x1920)で作る")
     intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
 
     apply_cmd = sub.add_parser("apply", help="○×編集シート(cutplan.sheet.txt)を計画に反映")

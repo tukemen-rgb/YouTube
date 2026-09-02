@@ -90,6 +90,12 @@ class TimelineFromFacts(unittest.TestCase):
                 self.assertIn(line, allowed,
                               f"facts に無い文言が発明されている: {line!r}")
 
+
+    def test_vertical_intro_dimensions(self):
+        # C15: ショート用の縦(1080x1920)でも同じ facts から作れる
+        timeline = build_timeline(_facts(), width=1080, height=1920)
+        self.assertEqual((timeline.width, timeline.height), (1080, 1920))
+
     def test_deterministic(self):
         self.assertEqual(build_timeline(_facts()), build_timeline(_facts()))
 

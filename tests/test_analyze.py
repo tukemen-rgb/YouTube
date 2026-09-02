@@ -139,5 +139,65 @@ class Highlight(unittest.TestCase):
         self.assertEqual(mark_highlight(segments, {}), segments)
 
 
+class Diagnosis(unittest.TestCase):
+    """自己診断(U13)— 極端な結果に気づいてノブを提案する。"""
+
+    def _plan(self, segments):
+        from videoyard.cutplan import CutPlan
+        return CutPlan(
+            source_path="/s.mp4", source_sha256="0" * 64, duration=100.0,
+            width=320, height=240, has_audio=True, mode="static_or_silent",
+            segments=tuple(segments),
+        )
+
+    def test_overcut_flagged(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([
+            PlanSegment(start=0.0, end=90.0, action="cut"),
+            PlanSegment(start=90.0, end=100.0, action="keep"),
+        ])
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True)
+        self.assertTrue(any("切りすぎ" in a for a in advice))
+
+    def test_nothing_cut_flagged(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([PlanSegment(start=0.0, end=100.0, action="keep")])
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True)
+        self.assertTrue(any("切れていない" in a for a in advice))
+
+    def test_no_audio_downgrade_noted(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([
+            PlanSegment(start=0.0, end=50.0, action="cut"),
+            PlanSegment(start=50.0, end=100.0, action="keep"),
+        ])
+        advice = diagnose(plan, AnalyzeParams(), has_audio=False)
+        self.assertTrue(any("音声が無い" in a for a in advice))
+
+    def test_choppy_keeps_flagged(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import PlanSegment
+        segments = []
+        cursor = 0.0
+        for _ in range(4):  # 1 秒 keep と 24 秒 cut を繰り返す細切れ
+            segments.append(PlanSegment(start=cursor, end=cursor + 1.0, action="keep"))
+            segments.append(PlanSegment(start=cursor + 1.0, end=cursor + 25.0, action="cut"))
+            cursor += 25.0
+        advice = diagnose(self._plan(segments), AnalyzeParams(), has_audio=True)
+        self.assertTrue(any("細切れ" in a for a in advice))
+
+    def test_normal_result_has_no_advice(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([
+            PlanSegment(start=0.0, end=40.0, action="cut"),
+            PlanSegment(start=40.0, end=100.0, action="keep"),
+        ])
+        self.assertEqual(diagnose(plan, AnalyzeParams(), has_audio=True), [])
+
+
 if __name__ == "__main__":
     unittest.main()
