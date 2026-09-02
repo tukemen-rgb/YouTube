@@ -135,6 +135,59 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
+    """録画 1 本 → 分析 → カット → サムネ → 説明文下書き を一気通貫(U14)。
+
+    auto は AI の案のまま切る。人が確定する原則は崩れていない:
+    計画・シートは全部残るので、気に入らなければ sheet → apply → cut。
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if not (directory / "job.json").is_file():
+        ProductionJob.create(directory, title=f"{args.source.name} のダイジェスト")
+    params = AnalyzeParams(
+        target_seconds=60.0 if args.shorts else None,
+    )
+    started = time.monotonic()
+
+    def show_progress(message: str) -> None:
+        print(f"[{time.monotonic() - started:4.0f}秒] {message}", flush=True)
+
+    learned = load_weights()
+    weights = learned[0] if learned is not None else None
+    plan = analyze(directory, args.source, params, hint=args.hint,
+                   weights=weights, progress=show_progress)
+    for line in format_plan_report(plan):
+        print(line)
+    for advice in diagnose(plan, params, plan.has_audio):
+        print(f"診断: {advice}")
+
+    show_progress("カットと書き出し中…")
+    job = ProductionJob.load(directory)
+    manifest = cut(directory, vertical=args.shorts, fast=args.fast,
+                   bgm=args.bgm, bgm_gain_db=args.bgm_db)
+    job.mark_done("assembly", note="videoyard auto")
+    # 学習用の添削は記録しない: auto は人の確認を経ていない案そのままで、
+    # 「AI の案=人の正解」と記録すると採点の学習データが汚れる。
+    # 人が sheet → apply → cut で直したときに cut 側が記録する。
+    thumbnails = extract_thumbnails(directory, text=args.text)
+    description = write_description(directory)
+    job.mark_done("metadata", note="videoyard auto(説明文の下書き)")
+
+    print("\nできたもの:")
+    print(f"  動画: {directory / 'out' / 'video.mp4'}"
+          f"({float(manifest['duration_seconds']):.1f} 秒"
+          f"{'、ショート 9:16' if args.shorts else ''})")
+    if thumbnails:
+        print(f"  サムネ候補: {thumbnails[0].parent}({len(thumbnails)} 枚)")
+    print(f"  説明文の下書き: {description}")
+    print(f"  盛り上がりグラフ: {directory / 'excitement.svg'}")
+    print("\n※ auto は AI の案のまま切っている。直すときは "
+          f"{directory / 'cutplan.sheet.txt'} の ○× を書き換えて "
+          f"python -m videoyard apply {directory} && "
+          f"python -m videoyard cut {directory}")
+    return 0
+
+
 def cmd_meta(directory: Path, _args: argparse.Namespace) -> int:
     path = write_description(directory)
     job = ProductionJob.load(directory)
@@ -335,6 +388,19 @@ def main(argv: list[str] | None = None) -> int:
     intro_cmd.add_argument("--vertical", action="store_true",
                            help="ショート用の縦(1080x1920)で作る")
     intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
+
+    auto_cmd = sub.add_parser(
+        "auto", help="録画 1 本から 分析→カット→サムネ→説明文 まで一気通貫")
+    auto_cmd.add_argument("directory", type=Path)
+    auto_cmd.add_argument("--source", type=Path, required=True, help="元動画ファイル")
+    auto_cmd.add_argument("--shorts", action="store_true",
+                          help="60 秒の縦ショートを一発生成(--target-seconds 60 + 縦出力)")
+    auto_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    auto_cmd.add_argument("--bgm", type=Path, default=None, help="手持ち BGM を重ねる")
+    auto_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
+    auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
+    auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
 
     meta_cmd = sub.add_parser("meta", help="チャプターと説明文の下書きを out/description.txt へ")
     meta_cmd.add_argument("directory", type=Path)
