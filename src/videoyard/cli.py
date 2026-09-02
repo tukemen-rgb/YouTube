@@ -122,6 +122,7 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     plan = analyze(directory, args.source, params, writer=writer, hint=args.hint,
                    weights=weights, progress=show_progress)
     print(f"カット計画の案: {directory / 'cutplan.json'}")
+    print(f"盛り上がりグラフ: {directory / 'excitement.svg'}(ブラウザで開ける)")
     for line in format_plan_report(plan):
         print(line)
     print(f"\n案を直すなら {directory / 'cutplan.sheet.txt'} の ○× とテロップを"

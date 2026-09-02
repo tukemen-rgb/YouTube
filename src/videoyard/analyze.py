@@ -39,6 +39,7 @@ from videoyard.excitement import (
     range_score,
     window_features,
 )
+from videoyard.graph import excitement_svg
 from videoyard.llm import OllamaTelopWriter, SceneBrief
 from videoyard.sheet import sheet_path, write_sheet
 
@@ -489,5 +490,9 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     (production_dir / "analysis_windows.json").write_text(
         json.dumps(windows, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    # 採点と切り貼りを 1 枚で確認できる絵(U12)。ブラウザで開ける
+    (production_dir / "excitement.svg").write_text(
+        excitement_svg(scores, WINDOW_SECONDS, plan), encoding="utf-8"
     )
     return plan
