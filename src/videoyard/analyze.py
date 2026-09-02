@@ -217,6 +217,66 @@ def complement(intervals: list[Interval], duration: float) -> list[Interval]:
     return out
 
 
+#: 切った理由の内訳(U15)。診断が文字列一致で内訳を数えるため定数にする。
+REASON_STATIC_AND_SILENT = "退屈な区間(静止画+無音)"
+REASON_SILENT_ONLY = "退屈な区間(無音。映像は動いている)"
+REASON_STATIC_ONLY = "退屈な区間(静止画。音はある)"
+REASON_ABSORBED = "短い区間(前後のカットへ吸収)"
+
+
+def split_cut(interval: Interval, static: list[Interval],
+              silent: list[Interval]) -> list[tuple[float, float, str]]:
+    """切る区間を、検出の内訳が変わる境界で割って理由を付ける。純粋関数(U15)。
+
+    静止と無音の区間が隣り合って 1 本のカットに融合しても、その中の
+    「無音というだけで切った」部分が内訳から消えないようにする。それが
+    分かると、しゃべらず操作している場面まで切れていないかを人が
+    (そして診断が)確かめられる。0.5 秒未満の切れ端は隣へ併合する
+    (表示ノイズにしない)。
+    """
+    start, end = interval
+    if end <= start:
+        return []
+    points = {start, end}
+    for s, e in static + silent:
+        points.update(p for p in (s, e) if start < p < end)
+
+    pieces: list[tuple[float, float, str]] = []
+    ordered = sorted(points)
+    for a, b in zip(ordered, ordered[1:], strict=False):
+        mid = (a + b) / 2
+        in_static = any(s <= mid < e for s, e in static)
+        in_silent = any(s <= mid < e for s, e in silent)
+        if in_static and in_silent:
+            reason = REASON_STATIC_AND_SILENT
+        elif in_silent:
+            reason = REASON_SILENT_ONLY
+        elif in_static:
+            reason = REASON_STATIC_ONLY
+        else:
+            reason = REASON_ABSORBED
+        if pieces and pieces[-1][2] == reason:
+            pieces[-1] = (pieces[-1][0], b, reason)
+        else:
+            pieces.append((a, b, reason))
+
+    merged: list[tuple[float, float, str]] = []
+    for piece in pieces:
+        if merged and piece[1] - piece[0] < 0.5:
+            prev = merged[-1]
+            merged[-1] = (prev[0], piece[1], prev[2])
+        elif not merged and piece[1] - piece[0] < 0.5 and len(pieces) > 1:
+            continue_from = piece[0]
+            merged.append((continue_from, piece[1], piece[2]))
+        else:
+            merged.append(piece)
+    # 先頭が切れ端だった場合は次の piece に吸わせる
+    if len(merged) >= 2 and merged[0][1] - merged[0][0] < 0.5:
+        first, second = merged[0], merged[1]
+        merged[:2] = [(first[0], second[1], second[2])]
+    return merged
+
+
 def propose_segments(duration: float, static: list[Interval], silent: list[Interval],
                      params: AnalyzeParams) -> list[PlanSegment]:
     """検出結果 → 切る/残すの案。全体を隙間なく覆う並びにする。"""
@@ -246,10 +306,13 @@ def propose_segments(duration: float, static: list[Interval], silent: list[Inter
                 telop=f"シーン {scene}", reason="動きまたは音がある",
             ))
         else:
-            segments.append(PlanSegment(
-                start=round(start, 3), end=round(end, 3), action="cut",
-                reason="退屈な区間(静止画/無音)",
-            ))
+            for piece_start, piece_end, reason in split_cut(
+                (start, end), static, silent
+            ):
+                segments.append(PlanSegment(
+                    start=round(piece_start, 3), end=round(piece_end, 3),
+                    action="cut", reason=reason,
+                ))
     if not any(s.action == "keep" for s in segments):
         raise AnalyzeError(
             "残す区間が 1 つも無い。検出の閾値が厳しすぎるか、"
@@ -385,6 +448,17 @@ def diagnose(plan: CutPlan, params: AnalyzeParams, has_audio: bool) -> list[str]
             "音声が無いため判定を静止画のみに切り替えた。無音カットは"
             "働いていない。"
         )
+    if plan.mode == "static_or_silent":
+        silent_only = sum(
+            s.end - s.start for s in plan.segments
+            if s.action == "cut" and s.reason == REASON_SILENT_ONLY
+        )
+        if silent_only >= 3.0 and silent_only >= plan.duration * 0.1:
+            advice.append(
+                f"映像は動いているのに無音というだけで {silent_only:.0f} 秒"
+                "切っている。しゃべらず操作している場面まで切れている可能性: "
+                "--mode static_and_silent(静止かつ無音だけ切る)を試す。"
+            )
     tiny_keeps = [s for s in plan.keeps if s.end - s.start < 2.0]
     if len(tiny_keeps) >= 3 and len(tiny_keeps) >= len(plan.keeps) / 2:
         advice.append(

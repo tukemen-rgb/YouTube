@@ -99,6 +99,53 @@ class Proposal(unittest.TestCase):
         self.assertEqual(telops, ["シーン 1", "シーン 2"])
 
 
+class CutReasons(unittest.TestCase):
+    """切った理由の内訳(U15)— 静止か無音かが区別されて残る。"""
+
+    def test_reasons_reflect_detection(self):
+        from videoyard.analyze import (
+            REASON_SILENT_ONLY,
+            REASON_STATIC_AND_SILENT,
+            REASON_STATIC_ONLY,
+        )
+        segments = propose_segments(
+            12.0, static=[(0, 2), (4, 6)], silent=[(4, 6), (8, 10)],
+            params=AnalyzeParams(),
+        )
+        reasons = {(s.start, s.end): s.reason for s in segments if s.action == "cut"}
+        self.assertEqual(reasons[(0.0, 2.0)], REASON_STATIC_ONLY)
+        self.assertEqual(reasons[(4.0, 6.0)], REASON_STATIC_AND_SILENT)
+        self.assertEqual(reasons[(8.0, 10.0)], REASON_SILENT_ONLY)
+
+    def test_absorbed_short_keep_labeled(self):
+        from videoyard.analyze import REASON_ABSORBED, split_cut
+        # 検出のどちらにも掛からない = min_keep で吸収された細切れ
+        self.assertEqual(split_cut((3.0, 4.0), [], []),
+                         [(3.0, 4.0, REASON_ABSORBED)])
+
+    def test_merged_cut_is_split_by_detection(self):
+        from videoyard.analyze import (
+            REASON_SILENT_ONLY,
+            REASON_STATIC_AND_SILENT,
+            split_cut,
+        )
+        # 静止 8-11/14-17 と無音 8-17 が融合した 1 本のカット。
+        # 中の「無音のみ」(11-14)が内訳として残ること。
+        pieces = split_cut((8.0, 17.0), static=[(8, 11), (14, 17)],
+                           silent=[(8, 17)])
+        self.assertEqual(pieces, [
+            (8.0, 11.0, REASON_STATIC_AND_SILENT),
+            (11.0, 14.0, REASON_SILENT_ONLY),
+            (14.0, 17.0, REASON_STATIC_AND_SILENT),
+        ])
+
+    def test_tiny_pieces_merge_into_neighbor(self):
+        from videoyard.analyze import split_cut
+        # 0.3 秒の切れ端は独立した行にしない(隣へ併合)
+        pieces = split_cut((0.0, 5.0), static=[(0, 4.7)], silent=[(4.7, 5.0)])
+        self.assertEqual(len(pieces), 1)
+
+
 class NearStill(unittest.TestCase):
     def test_sustained_low_motion_detected(self):
         from videoyard.analyze import low_motion_intervals
@@ -188,6 +235,29 @@ class Diagnosis(unittest.TestCase):
             cursor += 25.0
         advice = diagnose(self._plan(segments), AnalyzeParams(), has_audio=True)
         self.assertTrue(any("細切れ" in a for a in advice))
+
+    def test_silent_only_cuts_suggest_and_mode(self):
+        from videoyard.analyze import REASON_SILENT_ONLY, diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([
+            PlanSegment(start=0.0, end=15.0, action="cut",
+                        reason=REASON_SILENT_ONLY),
+            PlanSegment(start=15.0, end=100.0, action="keep"),
+        ])
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True)
+        self.assertTrue(any("static_and_silent" in a for a in advice))
+
+    def test_small_silent_only_cut_not_flagged(self):
+        from videoyard.analyze import REASON_SILENT_ONLY, diagnose
+        from videoyard.cutplan import PlanSegment
+        plan = self._plan([
+            PlanSegment(start=0.0, end=5.0, action="cut",
+                        reason=REASON_SILENT_ONLY),
+            PlanSegment(start=5.0, end=60.0, action="keep"),
+            PlanSegment(start=60.0, end=100.0, action="cut"),
+        ])
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True)
+        self.assertFalse(any("static_and_silent(静止かつ無音" in a for a in advice))
 
     def test_normal_result_has_no_advice(self):
         from videoyard.analyze import diagnose
