@@ -66,6 +66,40 @@ class PlanValidation(unittest.TestCase):
         self.assertEqual(CutPlan.from_dict(plan.to_dict()), plan)
 
 
+
+class TelopStyle(unittest.TestCase):
+    def test_vertical_telop_is_much_larger(self):
+        # C14: 縦変換で縮む分を掛け戻すので、縦用の文字は横用よりずっと大きい
+        from videoyard.cut import telop_font_size
+        plan = _plan(width=1920, height=1080)
+        self.assertGreater(telop_font_size(plan, vertical=True),
+                           telop_font_size(plan) * 2)
+
+    def test_position_and_color_reach_drawtext(self):
+        # C2: telop_pos=top と telop_color が描画に反映される
+        plan = _plan(segments=(
+            PlanSegment(start=0.0, end=5.0, action="keep", telop="上のテロップ",
+                        telop_pos="top", telop_color="#ffd166"),
+            PlanSegment(start=5.0, end=10.0, action="keep", telop="下のテロップ"),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            telops = write_telop_files(plan, Path(tmp))
+            args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), telops,
+                                 Path("/o.mp4"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        chains = [c for c in filter_arg.split(";") if "drawtext" in c]
+        self.assertIn("fontcolor=0xffd166", chains[0])
+        self.assertNotIn("y=h-text_h", chains[0])   # top は上に置く
+        self.assertIn("y=h-text_h", chains[1])      # 既定は下
+
+    def test_bad_style_rejected(self):
+        from videoyard.cutplan import CutPlanError
+        with self.assertRaises(CutPlanError):
+            PlanSegment(start=0.0, end=1.0, action="keep", telop_pos="middle")
+        with self.assertRaises(CutPlanError):
+            PlanSegment(start=0.0, end=1.0, action="keep", telop_color="red")
+
+
 class CommandBuilding(unittest.TestCase):
     def test_deterministic(self):
         plan = _plan()

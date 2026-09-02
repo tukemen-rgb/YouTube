@@ -11,6 +11,7 @@ timeline.json と同じ決まり: 検証は構築時、未知のキーは黙っ�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -42,6 +43,9 @@ class PlanSegment:
     reason: str = ""
     #: 盛り上がり度 0〜100(動画内の相対値)。analyze が付ける。無くてもよい。
     excite: int | None = None
+    #: テロップの様式(C2)。位置は bottom(既定)/top、色は #RRGGBB。
+    telop_pos: str = "bottom"
+    telop_color: str = "#ffffff"
 
     def __post_init__(self) -> None:
         _require(isinstance(self.start, (int, float)) and self.start >= 0, "start は 0 以上")
@@ -56,6 +60,10 @@ class PlanSegment:
             or (isinstance(self.excite, int) and 0 <= self.excite <= 100),
             "excite は 0〜100 の整数か無し",
         )
+        _require(self.telop_pos in ("bottom", "top"),
+                 f"telop_pos は bottom / top のどれか: {self.telop_pos}")
+        _require(bool(re.match(r"^#[0-9a-fA-F]{6}$", self.telop_color)),
+                 f"telop_color は #RRGGBB 形式: {self.telop_color}")
 
     def replaced(self, **changes: object) -> PlanSegment:
         return replace(self, **changes)  # type: ignore[arg-type]
@@ -70,6 +78,10 @@ class PlanSegment:
             data["reason"] = self.reason
         if self.excite is not None:
             data["excite"] = self.excite
+        if self.telop_pos != "bottom":
+            data["telop_pos"] = self.telop_pos
+        if self.telop_color != "#ffffff":
+            data["telop_color"] = self.telop_color
         return data
 
 
@@ -140,7 +152,8 @@ class CutPlan:
         _require(isinstance(raw_segments, list), "segments は配列")
         assert isinstance(raw_segments, list)
         segments = []
-        seg_known = {"start", "end", "action", "telop", "reason", "excite"}
+        seg_known = {"start", "end", "action", "telop", "reason", "excite",
+                     "telop_pos", "telop_color"}
         for i, raw in enumerate(raw_segments):
             _require(isinstance(raw, dict), f"segments[{i}] はオブジェクト")
             seg_unknown = set(raw) - seg_known

@@ -27,9 +27,14 @@ from videoyard.render import (
     wrap_text,
 )
 
-#: テロップの見た目。v0.2 は 1 種類だけ(増やすなら計画の記述に載せる)。
-TELOP_FONT_SIZE_RATIO = 0.05   # 画面高さに対する文字サイズ
+#: テロップの見た目。位置・色は計画(cutplan)の区間ごとに選べる(C2)。
+TELOP_FONT_SIZE_RATIO = 0.05   # 画面高さに対する文字サイズ(横動画)
 TELOP_MAX_HEIGHT_RATIO = 0.3   # テロップが占めてよい高さ
+#: ショート出力時の実効文字サイズ(出力 1920px 高に対する比)。テロップは
+#: 16:9 の絵に描いてから縦変換で縮むため、縮む分を先に掛け戻して大きく
+#: 描く(C14: 縮んだままだとスマホで読めない)。
+VERTICAL_TELOP_RATIO = 0.045
+VERTICAL_TELOP_MAX_HEIGHT_RATIO = 0.45
 
 #: つなぎ目の音のフェード秒数。切った端の波形が途中で断たれると
 #: 「ブツッ」というクリック音になるため、各区間の入りと終わりを
@@ -66,22 +71,29 @@ class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
 
 
-def telop_font_size(plan: CutPlan) -> int:
+def telop_font_size(plan: CutPlan, vertical: bool = False) -> int:
+    if vertical:
+        # 縦変換で fg は plan.width → VERTICAL_WIDTH に縮む。出力画面での
+        # 実効サイズが VERTICAL_TELOP_RATIO になるよう、縮む分を掛け戻す。
+        effective = VERTICAL_TELOP_RATIO * VERTICAL_HEIGHT
+        return max(16, int(effective * plan.width / VERTICAL_WIDTH))
     return max(16, int(plan.height * TELOP_FONT_SIZE_RATIO))
 
 
-def write_telop_files(plan: CutPlan, text_dir: Path) -> dict[int, Path]:
+def write_telop_files(plan: CutPlan, text_dir: Path,
+                      vertical: bool = False) -> dict[int, Path]:
     """keep 区間のテロップを折り返してファイルに書く(index → path)。"""
     text_dir.mkdir(parents=True, exist_ok=True)
-    font_size = telop_font_size(plan)
+    font_size = telop_font_size(plan, vertical=vertical)
     line_height = font_size + font_size // 4
+    max_ratio = VERTICAL_TELOP_MAX_HEIGHT_RATIO if vertical else TELOP_MAX_HEIGHT_RATIO
     paths: dict[int, Path] = {}
     for index, seg in enumerate(plan.segments):
         if seg.action != "keep" or not seg.telop:
             continue
         wrapped = wrap_text(seg.telop, font_size, plan.width)
         lines = wrapped.count("\n") + 1
-        if lines * line_height > plan.height * TELOP_MAX_HEIGHT_RATIO:
+        if lines * line_height > plan.height * max_ratio:
             raise CutError(
                 f"segments[{index}] のテロップが長すぎて画面に収まらない"
                 f"({lines} 行)。短くすること。"
@@ -92,18 +104,22 @@ def write_telop_files(plan: CutPlan, text_dir: Path) -> dict[int, Path]:
     return paths
 
 
-def _drawtext(seg: PlanSegment, plan: CutPlan, font_path: Path, text_path: Path) -> str:
-    font_size = telop_font_size(plan)
+def _drawtext(seg: PlanSegment, plan: CutPlan, font_path: Path, text_path: Path,
+              vertical: bool = False) -> str:
+    font_size = telop_font_size(plan, vertical=vertical)
+    margin = max(20, font_size // 2)
+    y = str(margin) if seg.telop_pos == "top" else f"h-text_h-{margin}"
+    color = "0x" + seg.telop_color[1:]
     return (
         f"drawtext=fontfile={_escape_filter_value(str(font_path))}"
         f":textfile={_escape_filter_value(str(text_path))}"
         ":expansion=none"
-        ":fontcolor=0xffffff"
+        f":fontcolor={color}"
         f":fontsize={font_size}"
         f":line_spacing={font_size // 4}"
         ":box=1:boxcolor=0x000000@0.5"
         f":boxborderw={max(6, font_size // 4)}"
-        f":x=(w-text_w)/2:y=h-text_h-{max(20, font_size // 2)}"
+        f":x=(w-text_w)/2:y={y}"
     )
 
 
@@ -135,7 +151,8 @@ def build_command(
         seg = plan.segments[index]
         chain = f"[0:v]trim=start={seg.start}:end={seg.end},setpts=PTS-STARTPTS"
         if index in telop_paths:
-            chain += "," + _drawtext(seg, plan, font_path, telop_paths[index])
+            chain += "," + _drawtext(seg, plan, font_path, telop_paths[index],
+                                     vertical=vertical)
         if transition == "dip" and len(keep_indexes) > 1:
             # 暗転つなぎ: つなぎ目側だけフェード。冒頭のフェードインと
             # 末尾のフェードアウトは入れない(動画の頭と尻は演出しない)。
@@ -257,7 +274,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
     font_path = resolve_font()
     out_dir = production_dir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
-    telop_paths = write_telop_files(plan, out_dir / "text")
+    telop_paths = write_telop_files(plan, out_dir / "text", vertical=vertical)
     final_path = out_dir / "video.mp4"
     tmp_path = out_dir / "video.tmp.mp4"
     tmp_path.unlink(missing_ok=True)
