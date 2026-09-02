@@ -38,6 +38,7 @@ from videoyard.learning import (
     train,
 )
 from videoyard.llm import LlmError, OllamaTelopWriter
+from videoyard.meta import write_description
 from videoyard.render import RenderError, render
 from videoyard.sheet import SheetError, apply_sheet, sheet_path, write_sheet
 from videoyard.thumbs import extract_thumbnails
@@ -134,6 +135,15 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_meta(directory: Path, _args: argparse.Namespace) -> int:
+    path = write_description(directory)
+    job = ProductionJob.load(directory)
+    job.mark_done("metadata", note="videoyard meta(チャプター+説明文の下書き)")
+    print(f"説明文の下書き: {path}")
+    print(path.read_text(encoding="utf-8"))
+    return 0
+
+
 def cmd_apply(directory: Path, _args: argparse.Namespace) -> int:
     plan = CutPlan.load(directory / "cutplan.json")
     path = sheet_path(directory)
@@ -215,6 +225,7 @@ def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
               "(盛り上がり度上位の瞬間。thumbnails.json に選定理由)")
         print("次の一手: 文字入りサムネは "
               f"python -m videoyard thumbs {directory} --text 'タイトル' / "
+              f"説明文の下書きは python -m videoyard meta {directory} / "
               "動画の確認は out/video.mp4")
     return 0
 
@@ -324,6 +335,10 @@ def main(argv: list[str] | None = None) -> int:
     intro_cmd.add_argument("--vertical", action="store_true",
                            help="ショート用の縦(1080x1920)で作る")
     intro_cmd.set_defaults(handler=lambda a: cmd_intro(a.directory, a))
+
+    meta_cmd = sub.add_parser("meta", help="チャプターと説明文の下書きを out/description.txt へ")
+    meta_cmd.add_argument("directory", type=Path)
+    meta_cmd.set_defaults(handler=lambda a: cmd_meta(a.directory, a))
 
     apply_cmd = sub.add_parser("apply", help="○×編集シート(cutplan.sheet.txt)を計画に反映")
     apply_cmd.add_argument("directory", type=Path)
