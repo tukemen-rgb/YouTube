@@ -21,10 +21,12 @@ from videoyard.cut import (
     BGM_DEFAULT_GAIN_DB,
     SHORTS_RECOMMENDED_SECONDS,
     TRANSITIONS,
+    CutError,
     cut,
 )
 from videoyard.cutplan import CutPlan, CutPlanError
 from videoyard.fonts import FontError
+from videoyard.incremental import cut_incremental
 from videoyard.intro import GameFacts, IntroError, build_timeline
 from videoyard.job import JobError, ProductionJob
 from videoyard.learning import (
@@ -178,10 +180,20 @@ def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
 
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     job = ProductionJob.load(directory)
-    manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
-                   vertical=args.vertical, fast=args.fast,
-                   bgm=args.bgm, bgm_gain_db=args.bgm_db,
-                   transition=args.transition)
+    if args.incremental:
+        if args.vertical:
+            raise CutError("--incremental は --vertical と併用できない"
+                           "(縦変換は結合後の全体に掛けるため)")
+        manifest = cut_incremental(
+            directory, normalize_loudness=not args.no_loudnorm, fast=args.fast,
+            bgm=args.bgm, bgm_gain_db=args.bgm_db, transition=args.transition)
+        print(f"差分再エンコード: 新規 {manifest['encoded_segments']} 区間 / "
+              f"再利用 {manifest['reused_segments']} 区間")
+    else:
+        manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
+                       vertical=args.vertical, fast=args.fast,
+                       bgm=args.bgm, bgm_gain_db=args.bgm_db,
+                       transition=args.transition)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     if args.vertical:
@@ -294,6 +306,9 @@ def main(argv: list[str] | None = None) -> int:
                          help="BGM の音量(dB、既定 -16)")
     cut_cmd.add_argument("--transition", choices=TRANSITIONS, default="none",
                          help="場面転換: none=ハードカット(既定) / dip=短い暗転")
+    cut_cmd.add_argument("--incremental", action="store_true",
+                         help="差分再エンコード: 変わっていない区間のエンコードを"
+                              "再利用して再カットを速くする(--vertical とは併用不可)")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")
