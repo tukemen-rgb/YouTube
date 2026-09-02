@@ -10,9 +10,11 @@
 
 ## 状態
 
-**v0.1 実装済み。** 骨組み(1 本の動画 = 1 ディレクトリの ProductionJob、
-timeline.json → mp4 の決定的レンダリング、オフラインテスト一式)が動く。
-AI・音声・ネットワークはまだ使わない。設計の根拠は既存リポジトリ
+**v0.9 実装済み。** 録画 1 本からダイジェスト一式(カット済み動画・
+サムネ候補・説明文下書き)までの一気通貫が動く。編集は必ず人が読める
+計画ファイルを挟み、人の添削からの学習・テロップのローカル AI 下書き
+(任意・localhost のみ)も動く。ネットワーク送信と自動公開は無い。
+設計の根拠は既存リポジトリ
 ([sidra-ai](https://github.com/tukemen-rgb/sidra-ai) /
 [marketing](https://github.com/tukemen-rgb/marketing) /
 [creater-yard](https://github.com/tukemen-rgb/creater-yard))の
@@ -26,7 +28,28 @@ AI・音声・ネットワークはまだ使わない。設計の根拠は既存
 - 生成物すべてに来歴(provenance)とライセンス記録を付ける
 - モデルなし・ネットワークなしで動くオフラインのテスト経路を最初から持つ
 
-## 使い方(v0.2: 元動画の自動カット編集)
+## いちばん簡単な使い方(v0.9: auto 一発)
+
+録画 1 本から、分析 → カット → サムネ候補 → 説明文の下書きまでを
+1 コマンドで出す。
+
+```bash
+python -m videoyard auto productions/mygame --source 録画.mp4
+#    --shorts       60 秒・縦 9:16 のショートを一発生成
+#    --fast         速さ優先エンコード
+#    --bgm 曲.mp3   手持ち BGM を重ねる(--bgm-db で音量)
+#    --text 'タイトル'  文字入りサムネも作る
+```
+
+できるもの: `out/video.mp4`(ダイジェスト)/ `out/thumbnails/`(サムネ候補)/
+`out/description.txt`(チャプター入り説明文の下書き)/ `excitement.svg`
+(盛り上がりグラフ)/ `cutplan.sheet.txt`(○×編集シート)。
+
+auto は **AI の案のまま**切る。直したいときはシートの ○× を書き換えて
+`apply` → `cut`(下の手動フロー)。auto の結果は学習用の添削として
+記録しない(人が確認していない案を「人の正解」として学習しないため)。
+
+## 使い方(v0.2: 元動画の自動カット編集を 1 段ずつ)
 
 録画した動画から退屈な区間(静止画・無音)を検出し、カット計画の
 「案」を作る。人が案を直して確定すると、テロップ付きのダイジェストに
@@ -48,9 +71,23 @@ python -m videoyard cut productions/mygame
 #    --bgm 曲.mp3 手持ち BGM をゲーム音の下に(--bgm-db で音量、既定 -16)
 #    --transition dip  つなぎ目に短い暗転(既定はハードカット)
 
+# 3'. テロップだけ直して作り直すときは差分再エンコードが速い(3 倍超・実測)
+python -m videoyard cut productions/mygame --incremental
+#    変わった区間だけ作り直して残りはキャッシュを再利用(--vertical とは併用不可)
+
 # 4. 文字入りサムネ(任意)
 python -m videoyard thumbs productions/mygame --text 'タイトル'
+
+# 5. チャプター入り説明文の下書き(任意)
+python -m videoyard meta productions/mygame   # → out/description.txt
 ```
+
+- **切った理由は内訳つき**で計画に残る: 「静止画+無音 / 無音のみ
+  (映像は動いている)/ 静止画のみ(音はある)」。無音というだけで
+  切った時間が長いときは、analyze が「--mode static_and_silent を試す」
+  と診断で提案する(しゃべらず操作している録画の切りすぎ対策)
+- analyze は結果が極端なとき(切りすぎ・何も切れない・細切れ)にも
+  回すべきノブを提案する。診断は助言で、決めるのは人
 
 - 各 keep 区間に**盛り上がり度 0〜100** が付く(v0.4)。動きの激しさ
   (フレーム差)・音の大きさ・音の急な立ち上がりを 0.5 秒ごとに測って
