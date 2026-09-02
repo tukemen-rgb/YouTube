@@ -35,7 +35,8 @@ python -m videoyard analyze productions/test1 --source 録画.mp4
   - 静止画の見逃し → `--near-still-ydif 0.5` など大きく
   - 切りすぎ → `--mode static_and_silent`(静止かつ無音のときだけ切る)
   - BGM が常に鳴っている録画 → `--silence-db -45` など小さく
-- `productions/test1/cutplan.json` を手で直し(keep/cut と telop は自由)、
+- `productions/test1/cutplan.sheet.txt` の行頭 ○/× とテロップを直して
+  `python -m videoyard apply productions/test1` で反映し(JSON 編集は不要)、
 
 ```bash
 python -m videoyard cut productions/test1

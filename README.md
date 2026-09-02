@@ -33,14 +33,23 @@ AI・音声・ネットワークはまだ使わない。設計の根拠は既存
 編集する。**動画を直接いじる前に必ず人が読める計画ファイルを挟む。**
 
 ```bash
-# 1. 分析 → カット計画の案(cutplan.json)ができる
+# 1. 分析 → カット計画の案と ○×編集シート(cutplan.sheet.txt)ができる
 python -m videoyard analyze productions/mygame --source 録画.mp4
-
-# 2. 案を直す(任意): cutplan.json の action(keep/cut)と telop を編集
 #    検出の閾値も選べる: --mode static_and_silent --silence-db -40 など
+#    尺指定: --target-seconds 60(盛り上がり度上位でその合計秒数に収める)
 
-# 3. 確定 → 切ってつないだ out/video.mp4 ができる
+# 2. 案を直す(任意): シートの行頭 ○(残す)/×(切る)とテロップを書き換えて
+python -m videoyard apply productions/mygame   # シートを計画に反映
+
+# 3. 確定 → 切ってつないだ out/video.mp4 とサムネ候補 3 枚ができる
 python -m videoyard cut productions/mygame
+#    --vertical   ショート用 9:16(1080x1920、ぼかし背景+中央配置)
+#    --fast       速さ優先(2.6 倍速目安。バイト単位の再現性は非保証)
+#    --bgm 曲.mp3 手持ち BGM をゲーム音の下に(--bgm-db で音量、既定 -16)
+#    --transition dip  つなぎ目に短い暗転(既定はハードカット)
+
+# 4. 文字入りサムネ(任意)
+python -m videoyard thumbs productions/mygame --text 'タイトル'
 ```
 
 - 各 keep 区間に**盛り上がり度 0〜100** が付く(v0.4)。動きの激しさ

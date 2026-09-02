@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "videoyard"
-version = "0.6.0"
+version = "0.7.0"
 description = "シドラスタジオの YouTube 動画制作パイプライン(元動画の自動カット編集+テロップ)"
 requires-python = ">=3.11"
 # 実行時依存はゼロ(標準ライブラリ+外部コマンドの ffmpeg のみ)。
