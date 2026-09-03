@@ -125,6 +125,22 @@ class AutoCommand(unittest.TestCase):
         # 直し方(sheet → apply → cut)が案内される
         self.assertIn("apply", stdout.getvalue())
 
+    def test_shorts_produces_vertical_video(self):
+        # U17: auto --shorts は 9:16(1080x1920)の縦動画を一発で出す
+        directory = Path(self._tmp.name) / "prod_auto_shorts"
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = main(["auto", str(directory),
+                         "--source", str(self.source), "--shorts", "--fast"])
+        self.assertEqual(code, 0)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0", str(directory / "out" / "video.mp4")],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(probe.stdout.strip(), "1080,1920")
+
 
 if __name__ == "__main__":
     unittest.main()
