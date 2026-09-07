@@ -48,6 +48,8 @@ from videoyard.photo import (
 )
 from videoyard.render import RenderError, render
 from videoyard.sheet import SheetError, apply_sheet, sheet_path, write_sheet
+from videoyard.shorts import DEFAULT_COUNT as SHORTS_DEFAULT_COUNT
+from videoyard.shorts import propose_short_plans
 from videoyard.thumbs import extract_thumbnails
 from videoyard.timeline import Scene, Timeline, TimelineError
 
@@ -192,6 +194,30 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
           f"{directory / 'cutplan.sheet.txt'} の ○× を書き換えて "
           f"python -m videoyard apply {directory} && "
           f"python -m videoyard cut {directory}")
+    return 0
+
+
+def cmd_shorts(directory: Path, args: argparse.Namespace) -> int:
+    """盛り上がり上位からショート候補を複数本作る(C21)。"""
+    plan = CutPlan.load(directory / "cutplan.json")
+    plans = propose_short_plans(plan, count=args.count)
+    print(f"ショート候補 {len(plans)} 本を作る(盛り上がり度の上位から):")
+    for i, clip_plan in enumerate(plans, start=1):
+        clip_dir = directory / "shorts" / f"clip_{i}"
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        clip_plan.save(clip_dir / "cutplan.json")
+        if not (clip_dir / "job.json").is_file():
+            ProductionJob.create(clip_dir, title=f"ショート候補 {i}")
+        job = ProductionJob.load(clip_dir)
+        manifest = cut(clip_dir, vertical=True, fast=args.fast,
+                       bgm=args.bgm, bgm_gain_db=args.bgm_db)
+        job.mark_done("assembly", note="videoyard shorts")
+        keep = clip_plan.keeps[0]
+        print(f"  {i}. {keep.start:.1f}〜{keep.end:.1f} 秒"
+              f"(盛り上がり度{keep.excite}) → {clip_dir / 'out' / 'video.mp4'}"
+              f"({float(manifest['duration_seconds']):.1f} 秒・9:16)")
+    print("\n気に入った 1 本を選ぶ。区間を直すなら各 clip_n/cutplan.json を"
+          "編集して python -m videoyard cut <clip_n> --vertical")
     return 0
 
 
@@ -435,6 +461,16 @@ def main(argv: list[str] | None = None) -> int:
     auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
+
+    shorts_cmd = sub.add_parser(
+        "shorts", help="盛り上がり上位からショート候補を複数本(縦 9:16)")
+    shorts_cmd.add_argument("directory", type=Path)
+    shorts_cmd.add_argument("--count", type=int, default=SHORTS_DEFAULT_COUNT,
+                            help="候補の本数(既定 3)")
+    shorts_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    shorts_cmd.add_argument("--bgm", type=Path, default=None)
+    shorts_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    shorts_cmd.set_defaults(handler=lambda a: cmd_shorts(a.directory, a))
 
     photo_cmd = sub.add_parser(
         "photo", help="写真一式 → スライドショー動画(ズーム演出+ぼかし背景)")
