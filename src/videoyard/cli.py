@@ -39,6 +39,13 @@ from videoyard.learning import (
 )
 from videoyard.llm import LlmError, OllamaTelopWriter
 from videoyard.meta import write_description
+from videoyard.photo import (
+    DEFAULT_SECONDS_PER_PHOTO,
+    PhotoError,
+    build_photo_plan,
+    collect_photos,
+    render_slideshow,
+)
 from videoyard.render import RenderError, render
 from videoyard.sheet import SheetError, apply_sheet, sheet_path, write_sheet
 from videoyard.thumbs import extract_thumbnails
@@ -185,6 +192,33 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
           f"{directory / 'cutplan.sheet.txt'} の ○× を書き換えて "
           f"python -m videoyard apply {directory} && "
           f"python -m videoyard cut {directory}")
+    return 0
+
+
+def cmd_photo(directory: Path, args: argparse.Namespace) -> int:
+    """写真一式 → スライドショー動画(U18)。計画は photoplan.json に残す。"""
+    directory.mkdir(parents=True, exist_ok=True)
+    plan_path = directory / "photoplan.json"
+    if plan_path.is_file():
+        print(f"既存の計画を使う: {plan_path}(写真を選び直すなら消して再実行)")
+    else:
+        if args.photos is None:
+            raise PhotoError("初回は --photos <写真フォルダ> を指定すること")
+        photos = collect_photos(args.photos)
+        plan = build_photo_plan(photos, seconds=args.seconds,
+                                vertical=args.vertical)
+        plan.save(plan_path)
+        print(f"写真 {len(photos)} 枚から計画を作った: {plan_path}")
+        print("テロップや 1 枚の秒数は photoplan.json を直して再実行で反映。")
+    if not (directory / "job.json").is_file():
+        ProductionJob.create(directory, title="写真スライドショー")
+    manifest = render_slideshow(directory, bgm=args.bgm,
+                                bgm_gain_db=args.bgm_db, fast=args.fast)
+    job = ProductionJob.load(directory)
+    job.mark_done("assembly", note="videoyard photo")
+    print(f"出力: {directory / 'out' / 'video.mp4'}")
+    print(f"長さ: {float(manifest['duration_seconds']):.1f} 秒 / "
+          f"{manifest['photo_count']} 枚(EXIF は出力に残していない)")
     return 0
 
 
@@ -401,6 +435,21 @@ def main(argv: list[str] | None = None) -> int:
     auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
+
+    photo_cmd = sub.add_parser(
+        "photo", help="写真一式 → スライドショー動画(ズーム演出+ぼかし背景)")
+    photo_cmd.add_argument("directory", type=Path)
+    photo_cmd.add_argument("--photos", type=Path, default=None,
+                           help="写真フォルダ(初回に必須。ファイル名順に並ぶ)")
+    photo_cmd.add_argument("--seconds", type=float,
+                           default=DEFAULT_SECONDS_PER_PHOTO,
+                           help="1 枚あたりの秒数(既定 4)")
+    photo_cmd.add_argument("--vertical", action="store_true",
+                           help="ショート用 9:16(1080x1920)")
+    photo_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    photo_cmd.add_argument("--bgm", type=Path, default=None, help="BGM を敷く")
+    photo_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    photo_cmd.set_defaults(handler=lambda a: cmd_photo(a.directory, a))
 
     meta_cmd = sub.add_parser("meta", help="チャプターと説明文の下書きを out/description.txt へ")
     meta_cmd.add_argument("directory", type=Path)
