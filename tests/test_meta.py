@@ -31,6 +31,20 @@ class Chapters(unittest.TestCase):
         # 出力動画の時間軸(切った分を詰める): 0 / 60 / 120 秒
         self.assertEqual(chapters, [(0.0, "開幕"), (60.0, "シーン 2"), (120.0, "決着")])
 
+    def test_speed_segment_shifts_time_axis(self):
+        # C20: ≫(4 倍速)は出力で 1/4 の長さを占め、見出しは付かない
+        plan = CutPlan(
+            source_path="/s.mp4", source_sha256="0" * 64, duration=300.0,
+            width=320, height=240, has_audio=True, mode="static_or_silent",
+            segments=(
+                PlanSegment(start=0.0, end=60.0, action="keep", telop="開幕"),
+                PlanSegment(start=60.0, end=100.0, action="speed"),  # 出力で 10 秒
+                PlanSegment(start=100.0, end=160.0, action="keep", telop="決着"),
+            ),
+        )
+        chapters = output_chapters(plan)
+        self.assertEqual(chapters, [(0.0, "開幕"), (70.0, "決着")])
+
     def test_timestamp_format(self):
         self.assertEqual(format_timestamp(0), "0:00")
         self.assertEqual(format_timestamp(65), "1:05")

@@ -20,7 +20,11 @@ FORMAT_VERSION = 1
 MAX_SEGMENTS = 500
 MAX_TELOP_CHARS = 120
 
-_ACTIONS = ("keep", "cut")
+#: speed(倍速で残す)の再生速度。無音カットで「話が飛ぶ」問題への
+#: 第 3 の選択肢(C20)。退屈だが文脈として要る区間を切らずに早送りする。
+SPEED_FACTOR = 4.0
+
+_ACTIONS = ("keep", "cut", "speed")
 
 
 class CutPlanError(ValueError):
@@ -113,7 +117,7 @@ class CutPlan:
             _require(seg.end <= self.duration + 0.5,
                      f"segments[{i}] が動画の長さ({self.duration}s)を超えている")
             previous_end = seg.end
-        _require(any(s.action == "keep" for s in self.segments),
+        _require(any(s.action in ("keep", "speed") for s in self.segments),
                  "keep の区間が 1 つも無い(全部切ると動画が残らない)")
 
     @property
@@ -121,8 +125,21 @@ class CutPlan:
         return tuple(s for s in self.segments if s.action == "keep")
 
     @property
+    def renders(self) -> tuple[PlanSegment, ...]:
+        """出力動画に(等速または倍速で)現れる区間。時間順。"""
+        return tuple(s for s in self.segments if s.action in ("keep", "speed"))
+
+    @property
     def kept_seconds(self) -> float:
         return sum(s.end - s.start for s in self.keeps)
+
+    @property
+    def output_seconds(self) -> float:
+        """出力動画の長さ(keep は等速、speed は 1/SPEED_FACTOR)。"""
+        return sum(
+            (s.end - s.start) / (SPEED_FACTOR if s.action == "speed" else 1.0)
+            for s in self.renders
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {

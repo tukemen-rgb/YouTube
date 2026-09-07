@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from videoyard.cutplan import CutPlan
+from videoyard.cutplan import SPEED_FACTOR, CutPlan
 
 #: YouTube でチャプターが目次として機能する条件。
 MIN_CHAPTERS = 3
@@ -39,10 +39,15 @@ def output_chapters(plan: CutPlan) -> list[tuple[float, str]]:
     """
     chapters: list[tuple[float, str]] = []
     cursor = 0.0
-    for scene, seg in enumerate(plan.keeps, start=1):
-        label = seg.telop if seg.telop else f"シーン {scene}"
-        chapters.append((round(cursor, 3), label))
-        cursor += seg.end - seg.start
+    scene = 0
+    for seg in plan.renders:
+        if seg.action == "keep":
+            scene += 1
+            label = seg.telop if seg.telop else f"シーン {scene}"
+            chapters.append((round(cursor, 3), label))
+            cursor += seg.end - seg.start
+        else:  # speed: 出力では 1/SPEED_FACTOR に縮む。見出しは付けない
+            cursor += (seg.end - seg.start) / SPEED_FACTOR
     return chapters
 
 
@@ -70,7 +75,7 @@ def build_description(plan: CutPlan, bgm_name: str = "") -> str:
     chapters = output_chapters(plan)
     lines = ["【チャプター】"]
     lines += [f"{format_timestamp(t)} {label}" for t, label in chapters]
-    warnings = chapter_warnings(chapters, plan.kept_seconds)
+    warnings = chapter_warnings(chapters, plan.output_seconds)
     if warnings:
         lines.append("")
         lines.append("(注: このままでは YouTube の目次として表示されない: "

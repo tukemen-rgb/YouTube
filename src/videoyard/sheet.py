@@ -26,6 +26,8 @@ from videoyard.cutplan import CutPlan, CutPlanError, PlanSegment
 
 _KEEP_MARKS = {"○", "◯", "o", "O", "〇"}
 _CUT_MARKS = {"×", "x", "X", "☓", "✕"}
+#: 倍速で残す(C20)。切ると話が飛ぶが等速で見せるほどでもない区間。
+_SPEED_MARKS = {"≫", "»", ">"}
 
 _LINE = re.compile(
     r"^\s*(?P<mark>\S)\s+(?P<index>\d+)\s+\S+"  # 記号 番号 時刻(照合用)
@@ -45,11 +47,12 @@ def _clock(seconds: float) -> str:
 def write_sheet(plan: CutPlan) -> str:
     """計画 → 人が直すためのシート文字列。"""
     lines = [
-        "# ○=残す ×=切る。行頭の記号だけ書き換える。テロップは | の後ろ。",
+        "# ○=残す ×=切る ≫=4倍速で残す。行頭の記号だけ書き換える。テロップは | の後ろ。",
         "# 番号と時刻は照合用(書き換えても効かない)。反映: python -m videoyard apply <dir>",
     ]
+    marks = {"keep": "○", "cut": "×", "speed": "≫"}
     for number, seg in enumerate(plan.segments, start=1):
-        mark = "○" if seg.action == "keep" else "×"
+        mark = marks[seg.action]
         line = f"{mark} {number} {_clock(seg.start)}-{_clock(seg.end)}"
         if seg.telop:
             line += f" | {seg.telop}"
@@ -59,9 +62,9 @@ def write_sheet(plan: CutPlan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def parse_sheet(text: str) -> dict[int, tuple[bool, str]]:
-    """シート → {番号: (残すか, テロップ)}。"""
-    entries: dict[int, tuple[bool, str]] = {}
+def parse_sheet(text: str) -> dict[int, tuple[str, str]]:
+    """シート → {番号: (action, テロップ)}。"""
+    entries: dict[int, tuple[str, str]] = {}
     for line_number, raw in enumerate(text.splitlines(), start=1):
         line = raw.split("#", 1)[0].rstrip() if not raw.lstrip().startswith("#") else ""
         if not line.strip():
@@ -71,15 +74,17 @@ def parse_sheet(text: str) -> dict[int, tuple[bool, str]]:
             raise SheetError(f"{line_number} 行目が読めない: {raw!r}")
         mark = m.group("mark")
         if mark in _KEEP_MARKS:
-            keep = True
+            action = "keep"
         elif mark in _CUT_MARKS:
-            keep = False
+            action = "cut"
+        elif mark in _SPEED_MARKS:
+            action = "speed"
         else:
-            raise SheetError(f"{line_number} 行目の記号が ○/× でない: {mark!r}")
+            raise SheetError(f"{line_number} 行目の記号が ○/×/≫ でない: {mark!r}")
         index = int(m.group("index"))
         if index in entries:
             raise SheetError(f"番号 {index} が 2 回出てくる")
-        entries[index] = (keep, (m.group("telop") or "").strip())
+        entries[index] = (action, (m.group("telop") or "").strip())
     if not entries:
         raise SheetError("シートに区間の行が 1 つも無い")
     return entries
@@ -104,17 +109,16 @@ def apply_sheet(plan: CutPlan, text: str) -> CutPlan:
 
     segments: list[PlanSegment] = []
     for number, seg in enumerate(plan.segments, start=1):
-        keep, telop = entries[number]
-        action = "keep" if keep else "cut"
+        action, telop = entries[number]
         changes: dict[str, object] = {}
         if action != seg.action:
             changes["action"] = action
             changes["reason"] = seg.reason + "(シートで変更)" if seg.reason else "シートで変更"
-        if keep:
+        if action == "keep":
             if telop != seg.telop:
                 changes["telop"] = telop
         elif seg.telop:
-            changes["telop"] = ""  # 切る区間にテロップは残さない
+            changes["telop"] = ""  # 切る/倍速の区間にテロップは残さない
         segments.append(replace(seg, **changes) if changes else seg)
     try:
         return replace(plan, segments=tuple(segments))

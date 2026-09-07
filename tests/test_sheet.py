@@ -48,6 +48,27 @@ class Editing(unittest.TestCase):
         sheet = write_sheet(plan).replace("○ 2", "o 2").replace("× 1", "x 1")
         self.assertEqual(apply_sheet(plan, sheet), plan)
 
+    def test_speed_mark_round_trip(self):
+        # C20: ≫(4 倍速)がシートに現れ、書き戻しても同じ計画になる
+        from dataclasses import replace
+        plan = _plan()
+        plan = replace(plan, segments=(
+            plan.segments[0],
+            replace(plan.segments[1], action="speed", telop=""),
+            plan.segments[2],
+        ))
+        sheet = write_sheet(plan)
+        self.assertIn("≫ 2 00:02.0-00:05.0", sheet)
+        self.assertEqual(apply_sheet(plan, sheet), plan)
+
+    def test_flip_keep_to_speed(self):
+        plan = _plan()
+        sheet = write_sheet(plan).replace("○ 3 00:05.0-00:10.0", "≫ 3 00:05.0-00:10.0")
+        updated = apply_sheet(plan, sheet)
+        self.assertEqual(updated.segments[2].action, "speed")
+        self.assertEqual(updated.segments[2].telop, "")  # 倍速にテロップは残さない
+        self.assertIn("シートで変更", updated.segments[2].reason)
+
     def test_cutting_removes_telop(self):
         plan = _plan()
         sheet = write_sheet(plan).replace("○ 2 00:02.0-00:05.0", "× 2 00:02.0-00:05.0")
@@ -75,7 +96,7 @@ class Rejections(unittest.TestCase):
 
     def test_comment_and_blank_lines_ignored(self):
         entries = parse_sheet("# メモ\n\n○ 1 00:00.0-00:02.0 | あ # 盛り上がり度9\n")
-        self.assertEqual(entries, {1: (True, "あ")})
+        self.assertEqual(entries, {1: ("keep", "あ")})
 
 
 if __name__ == "__main__":

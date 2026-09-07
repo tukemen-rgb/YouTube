@@ -230,7 +230,7 @@ def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
     ]
 
     def row(seg) -> str:
-        mark = "残す" if seg.action == "keep" else "切る"
+        mark = {"keep": "残す", "cut": "切る", "speed": "倍速"}[seg.action]
         excite = f" 盛り上がり度{seg.excite:3d}" if seg.excite is not None else ""
         return f"  {seg.start:7.1f}〜{seg.end:7.1f}  {mark}{excite}  {seg.reason}"
 

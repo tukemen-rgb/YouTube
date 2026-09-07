@@ -197,6 +197,11 @@ def cut_incremental(production_dir: Path, normalize_loudness: bool = True,
         raise CutError(f"transition は {TRANSITIONS} のどれか: {transition}")
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
+    if any(s.action == "speed" for s in plan.segments):
+        raise CutError(
+            "--incremental は ≫(倍速)の区間がある計画には未対応。"
+            "通常の cut を使うこと。"
+        )
     source = Path(plan.source_path)
     if not source.is_absolute():
         source = production_dir / source

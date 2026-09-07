@@ -55,6 +55,20 @@ class PlanValidation(unittest.TestCase):
         with self.assertRaises(CutPlanError):
             PlanSegment(start=0.0, end=1.0, action="maybe")
 
+    def test_speed_counts_toward_output_seconds(self):
+        # C20: ≫(4 倍速)は出力に 1/4 の長さで現れる
+        plan = _plan(segments=(
+            PlanSegment(start=0.0, end=4.0, action="speed"),
+            PlanSegment(start=4.0, end=10.0, action="keep"),
+        ))
+        self.assertEqual(plan.kept_seconds, 6.0)
+        self.assertEqual(plan.output_seconds, 7.0)
+
+    def test_all_speed_is_valid(self):
+        # 全編早送りも計画としては成立する(動画は残る)
+        plan = _plan(segments=(PlanSegment(start=0.0, end=10.0, action="speed"),))
+        self.assertEqual(plan.output_seconds, 2.5)
+
     def test_rejects_unknown_keys(self):
         data = _plan().to_dict()
         data["speed"] = 2.0
@@ -157,6 +171,24 @@ class CommandBuilding(unittest.TestCase):
         default = build_command(_plan(), Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
         self.assertIn("medium", default)
         self.assertEqual(default[default.index("-threads") + 1], "1")
+
+    def test_speed_segment_uses_setpts_and_atempo(self):
+        # C20: ≫ は映像 setpts 1/4 + 音声 atempo 2 段(2x2=4 倍)で早送り
+        plan = _plan(segments=(
+            PlanSegment(start=0.0, end=2.0, action="cut"),
+            PlanSegment(start=2.0, end=5.0, action="keep", telop="シーン 1"),
+            PlanSegment(start=5.0, end=7.0, action="speed"),
+            PlanSegment(start=7.0, end=10.0, action="keep", telop="シーン 2"),
+        ))
+        args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"), {}, Path("/o.mp4"))
+        filter_arg = args[args.index("-filter_complex") + 1]
+        self.assertIn("trim=start=5.0:end=7.0,setpts=PTS-STARTPTS,setpts=PTS/4",
+                      filter_arg)
+        self.assertIn("atempo=2.0,atempo=2.0", filter_arg)
+        self.assertIn("concat=n=3:v=1:a=1", filter_arg)  # 3 区間が出力に並ぶ
+        # 等速区間は早回しされない
+        self.assertNotIn("trim=start=2.0:end=5.0,setpts=PTS-STARTPTS,setpts",
+                         filter_arg)
 
     def test_bgm_mixed_under_game_audio_then_normalized(self):
         # BGM はゲーム音の下に控えめに敷き(C10)、ミックス後に正規化する
@@ -292,6 +324,41 @@ class RealCut(unittest.TestCase):
         self.assertAlmostEqual(out_duration, plan.kept_seconds, delta=0.6)
         self.assertTrue((directory / "out" / "render_manifest.json").is_file())
         self.assertEqual(manifest["plan_file"], "cutplan.json")
+
+    def test_speed_segment_shortens_output(self):
+        # C20 e2e: 真ん中の退屈 2 秒を ≫ にすると出力に 0.5 秒で残る
+        from dataclasses import replace as dc_replace
+
+        from videoyard.analyze import AnalyzeParams, analyze
+        from videoyard.incremental import cut_incremental
+
+        directory = Path(self._tmp.name) / "prod_speed"
+        directory.mkdir()
+        plan = analyze(directory, self.source, AnalyzeParams())
+        # 真ん中(5〜7 秒あたり)の cut 区間を ≫ に変える。検出の境界は
+        # 窓の粒度でずれるので、時刻ぴったりではなく位置で選ぶ。
+        middle = next(s for s in plan.segments
+                      if s.action == "cut" and 4.0 < s.start < 6.5)
+        segments = tuple(
+            dc_replace(s, action="speed") if s is middle else s
+            for s in plan.segments
+        )
+        plan = dc_replace(plan, segments=segments)
+        plan.save(directory / "cutplan.json")
+        manifest = cut(directory, fast=True)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(directory / "out" / "video.mp4")],
+            capture_output=True, text=True, check=True,
+        )
+        expected = plan.output_seconds  # keep 全部 + speed 区間の 1/4
+        self.assertAlmostEqual(
+            expected, plan.kept_seconds + (middle.end - middle.start) / 4, places=3)
+        self.assertAlmostEqual(float(probe.stdout.strip()), expected, delta=0.6)
+        self.assertAlmostEqual(float(manifest["duration_seconds"]), expected, places=3)
+        # 差分再エンコードは ≫ 未対応を明示して断る
+        with self.assertRaises(CutError):
+            cut_incremental(directory)
 
     def test_analyze_reports_progress(self):
         from videoyard.analyze import AnalyzeParams, analyze

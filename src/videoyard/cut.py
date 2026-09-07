@@ -17,7 +17,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from videoyard.cutplan import CutPlan, PlanSegment
+from videoyard.cutplan import SPEED_FACTOR, CutPlan, PlanSegment
 from videoyard.fonts import resolve_font
 from videoyard.render import (
     MANIFEST_VERSION,
@@ -140,43 +140,54 @@ def build_command(
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
     if transition not in TRANSITIONS:
         raise CutError(f"transition は {TRANSITIONS} のどれか: {transition}")
-    keep_indexes = [i for i, s in enumerate(plan.segments) if s.action == "keep"]
-    if not keep_indexes:
+    render_indexes = [i for i, s in enumerate(plan.segments)
+                      if s.action in ("keep", "speed")]
+    if not render_indexes:
         raise CutError("keep の区間が無い")
 
     filters = []
     labels_v = []
     labels_a = []
-    for n, index in enumerate(keep_indexes):
+    for n, index in enumerate(render_indexes):
         seg = plan.segments[index]
         chain = f"[0:v]trim=start={seg.start}:end={seg.end},setpts=PTS-STARTPTS"
+        if seg.action == "speed":
+            # 倍速で残す(C20)。切ると話が飛ぶ区間の早送り。
+            chain += f",setpts=PTS/{SPEED_FACTOR:g}"
         if index in telop_paths:
             chain += "," + _drawtext(seg, plan, font_path, telop_paths[index],
                                      vertical=vertical)
-        if transition == "dip" and len(keep_indexes) > 1:
+        # 出力動画上でのこの区間の長さ(speed は縮む)。フェードの基準。
+        seg_duration = seg.end - seg.start
+        if seg.action == "speed":
+            seg_duration /= SPEED_FACTOR
+        if transition == "dip" and len(render_indexes) > 1:
             # 暗転つなぎ: つなぎ目側だけフェード。冒頭のフェードインと
             # 末尾のフェードアウトは入れない(動画の頭と尻は演出しない)。
-            seg_duration = seg.end - seg.start
             fade = min(VIDEO_FADE_SECONDS, seg_duration / 4)
             if n > 0:
                 chain += f",fade=t=in:st=0:d={fade}"
-            if n < len(keep_indexes) - 1:
+            if n < len(render_indexes) - 1:
                 fade_out_at = round(max(0.0, seg_duration - fade), 3)
                 chain += f",fade=t=out:st={fade_out_at}:d={fade}"
         filters.append(f"{chain}[v{n}]")
         labels_v.append(f"[v{n}]")
         if plan.has_audio:
-            seg_duration = seg.end - seg.start
+            achain = (f"[0:a]atrim=start={seg.start}:end={seg.end}"
+                      ",asetpts=PTS-STARTPTS")
+            if seg.action == "speed":
+                # atempo は 1 段 2 倍まで。4 倍は 2 段重ねる。
+                achain += ",atempo=2.0,atempo=2.0"
             fade = min(AUDIO_FADE_SECONDS, seg_duration / 4)
             fade_out_at = round(max(0.0, seg_duration - fade), 3)
             filters.append(
-                f"[0:a]atrim=start={seg.start}:end={seg.end},asetpts=PTS-STARTPTS"
+                f"{achain}"
                 f",afade=t=in:st=0:d={fade}"
                 f",afade=t=out:st={fade_out_at}:d={fade}[a{n}]"
             )
             labels_a.append(f"[a{n}]")
 
-    n = len(keep_indexes)
+    n = len(render_indexes)
     video_label = "[outv]"
     audio_label: str | None = None
     if plan.has_audio:
@@ -189,7 +200,7 @@ def build_command(
     if bgm is not None:
         # BGM はゲーム音の「下」に控えめに敷く(C10)。動画より短ければ
         # 入力側でループし、末尾はフェードアウトで終える。
-        kept = round(plan.kept_seconds, 3)
+        kept = round(plan.output_seconds, 3)
         fade_start = round(max(0.0, kept - BGM_FADE_OUT_SECONDS), 3)
         filters.append(
             f"[1:a]atrim=0:{kept},asetpts=PTS-STARTPTS"
@@ -306,7 +317,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "font_sha256": _sha256(font_path),
         "output_sha256": _sha256(tmp_path),
         "output_bytes": tmp_path.stat().st_size,
-        "duration_seconds": plan.kept_seconds,
+        "duration_seconds": plan.output_seconds,
         "vertical": vertical,
         "fast": fast,
         "bgm_path": str(bgm) if bgm is not None else "",
