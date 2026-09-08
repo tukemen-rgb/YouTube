@@ -52,6 +52,20 @@ python -m videoyard export productions/mygame --fps 30
 区間は EDL の M2 モーション記録 / FCPXML の timeMap で運ばれる。
 編集点は fps のフレームに丸め、ずれがあれば実行時に注記する。
 
+## 出来上がりを 1 枚で確認する(v0.13: review)
+
+動画・盛り上がりグラフ・サムネ候補・全区間の理由・チャプター・説明文の
+下書きを **1 枚の HTML** にまとめる。`auto` と `batch` は自動で作る。
+
+```bash
+python -m videoyard review productions/mygame   # → out/review.html
+```
+
+外部の CSS も JavaScript も読まないのでネット無しで開ける。動画と
+サムネは相対パス参照なので、production フォルダごと渡せる。
+テロップなどの文字は HTML としてではなく文字として表示する
+(データを命令として解釈しない、はここでも同じ)。
+
 ## 何本もまとめて処理する(v0.12: batch)
 
 録画フォルダを丸ごと処理する。**1 本失敗しても止まらず**、最後に何が

@@ -57,6 +57,7 @@ from videoyard.photo import (
     render_slideshow,
 )
 from videoyard.render import RenderError, render
+from videoyard.review import write_review
 from videoyard.sheet import SheetError, apply_sheet, sheet_path, write_sheet
 from videoyard.shorts import DEFAULT_COUNT as SHORTS_DEFAULT_COUNT
 from videoyard.shorts import propose_short_plans
@@ -191,6 +192,7 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
     thumbnails = extract_thumbnails(directory, text=args.text)
     description = write_description(directory)
     job.mark_done("metadata", note="videoyard auto(説明文の下書き)")
+    review = write_review(directory)
 
     print("\nできたもの:")
     print(f"  動画: {directory / 'out' / 'video.mp4'}"
@@ -200,6 +202,7 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
         print(f"  サムネ候補: {thumbnails[0].parent}({len(thumbnails)} 枚)")
     print(f"  説明文の下書き: {description}")
     print(f"  盛り上がりグラフ: {directory / 'excitement.svg'}")
+    print(f"  確認ページ: {review}(ブラウザで開くと全部まとめて見られる)")
     print("\n※ auto は AI の案のまま切っている。直すときは "
           f"{directory / 'cutplan.sheet.txt'} の ○× を書き換えて "
           f"python -m videoyard apply {directory} && "
@@ -230,6 +233,7 @@ def cmd_batch(root: Path, args: argparse.Namespace) -> int:
         extract_thumbnails(item.directory)
         write_description(item.directory)
         job.mark_done("metadata", note="videoyard batch")
+        write_review(item.directory)
         return float(manifest["duration_seconds"])
 
     results = run_batch(items, process, force=args.force, progress=print)
@@ -239,6 +243,15 @@ def cmd_batch(root: Path, args: argparse.Namespace) -> int:
     report = write_report(root, results)
     print(f"\n記録: {report}")
     return 1 if any(r.status == "failed" for r in results) else 0
+
+
+def cmd_review(directory: Path, _args: argparse.Namespace) -> int:
+    """確認用の 1 枚ページを作る(S4)。"""
+    path = write_review(directory)
+    print(f"確認ページ: {path}")
+    print("ブラウザで開くと、動画・盛り上がりグラフ・サムネ候補・"
+          "全区間の理由・説明文の下書きが 1 枚で見られる。")
+    return 0
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
@@ -552,6 +565,11 @@ def main(argv: list[str] | None = None) -> int:
     batch_cmd.add_argument("--bgm", type=Path, default=None)
     batch_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
     batch_cmd.set_defaults(handler=lambda a: cmd_batch(a.directory, a))
+
+    review_cmd = sub.add_parser(
+        "review", help="確認用の 1 枚ページ(out/review.html)を作る")
+    review_cmd.add_argument("directory", type=Path)
+    review_cmd.set_defaults(handler=lambda a: cmd_review(a.directory, a))
 
     doctor_cmd = sub.add_parser(
         "doctor", help="使う前の環境診断(足りないものと直し方を出す)")
