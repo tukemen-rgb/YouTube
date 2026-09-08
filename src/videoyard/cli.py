@@ -17,6 +17,14 @@ import time
 from pathlib import Path
 
 from videoyard.analyze import MODES, AnalyzeError, AnalyzeParams, analyze, diagnose
+from videoyard.batch import (
+    Item,
+    collect_videos,
+    format_summary,
+    plan_items,
+    run_batch,
+    write_report,
+)
 from videoyard.cut import (
     BGM_DEFAULT_GAIN_DB,
     SHORTS_RECOMMENDED_SECONDS,
@@ -197,6 +205,40 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
           f"python -m videoyard apply {directory} && "
           f"python -m videoyard cut {directory}")
     return 0
+
+
+def cmd_batch(root: Path, args: argparse.Namespace) -> int:
+    """録画フォルダをまとめて処理する(S3)。1 本失敗しても止まらない。"""
+    videos = collect_videos(args.sources)
+    items = plan_items(videos, root)
+    print(f"動画 {len(items)} 本を {root} に処理する"
+          f"{'(--force: 出来ている分も作り直す)' if args.force else ''}")
+
+    def process(item: Item) -> float:
+        item.directory.mkdir(parents=True, exist_ok=True)
+        if not (item.directory / "job.json").is_file():
+            ProductionJob.create(item.directory,
+                                 title=f"{item.source.name} のダイジェスト")
+        params = AnalyzeParams(target_seconds=60.0 if args.shorts else None)
+        learned = load_weights()
+        weights = learned[0] if learned is not None else None
+        analyze(item.directory, item.source, params, weights=weights)
+        job = ProductionJob.load(item.directory)
+        manifest = cut(item.directory, vertical=args.shorts, fast=args.fast,
+                       bgm=args.bgm, bgm_gain_db=args.bgm_db)
+        job.mark_done("assembly", note="videoyard batch")
+        extract_thumbnails(item.directory)
+        write_description(item.directory)
+        job.mark_done("metadata", note="videoyard batch")
+        return float(manifest["duration_seconds"])
+
+    results = run_batch(items, process, force=args.force, progress=print)
+    print()
+    for line in format_summary(results):
+        print(line)
+    report = write_report(root, results)
+    print(f"\n記録: {report}")
+    return 1 if any(r.status == "failed" for r in results) else 0
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
@@ -495,6 +537,21 @@ def main(argv: list[str] | None = None) -> int:
     auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
+
+    batch_cmd = sub.add_parser(
+        "batch", help="録画フォルダをまとめて処理する(失敗しても止まらない)")
+    batch_cmd.add_argument("directory", type=Path,
+                           help="production をまとめて作る親フォルダ")
+    batch_cmd.add_argument("--sources", type=Path, required=True,
+                           help="録画が入っているフォルダ")
+    batch_cmd.add_argument("--shorts", action="store_true",
+                           help="60 秒・縦 9:16 で作る")
+    batch_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    batch_cmd.add_argument("--force", action="store_true",
+                           help="出来ている分も作り直す(既定は飛ばす)")
+    batch_cmd.add_argument("--bgm", type=Path, default=None)
+    batch_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    batch_cmd.set_defaults(handler=lambda a: cmd_batch(a.directory, a))
 
     doctor_cmd = sub.add_parser(
         "doctor", help="使う前の環境診断(足りないものと直し方を出す)")

@@ -52,6 +52,20 @@ python -m videoyard export productions/mygame --fps 30
 区間は EDL の M2 モーション記録 / FCPXML の timeMap で運ばれる。
 編集点は fps のフレームに丸め、ずれがあれば実行時に注記する。
 
+## 何本もまとめて処理する(v0.12: batch)
+
+録画フォルダを丸ごと処理する。**1 本失敗しても止まらず**、最後に何が
+なぜ失敗したかをまとめて報告する。出来ている分は飛ばすので、失敗した
+分だけ後から流し直せる(夜に走らせて朝に足す運用ができる)。
+
+```bash
+python -m videoyard batch productions/週次 --sources ~/録画フォルダ --fast
+#    --shorts  全部 60 秒・縦 9:16 で作る
+#    --force   出来ている分も作り直す
+```
+
+結果は `batch_report.json`(何を作り、何がなぜ失敗したか)に残る。
+
 ## いちばん簡単な使い方(v0.9: auto 一発)
 
 録画 1 本から、分析 → カット → サムネ候補 → 説明文の下書きまでを
