@@ -204,7 +204,11 @@ def _scene_filter(index: int, scene: PhotoScene, plan: PhotoPlan,
             f":boxborderw={max(6, font_size // 4)}"
             f":x=(w-text_w)/2:y=h-text_h-{margin}"
         )
-    chain += f",format=yuv420p[s{index}]"
+    # setsar=1 は必須。scale の force_original_aspect_ratio は縦横比の
+    # 端数を画素比(SAR)に押し込むことがあり、縦横比の違う写真が混ざると
+    # 1 枚ごとに SAR が変わる。concat は SAR が揃っていないと
+    # 「Invalid argument」で止まる(社長のタイ旅行の写真で実際に踏んだ)。
+    chain += f",setsar=1,format=yuv420p[s{index}]"
     return chain
 
 

@@ -170,5 +170,38 @@ class RealRendering(unittest.TestCase):
             self.assertFalse((directory / "out" / "video.mp4").exists())
 
 
+
+class BalancedWrapping(unittest.TestCase):
+    """折り返しは行数を増やさず、各行の長さを均す(実データで発覚)。"""
+
+    def test_no_orphan_last_line(self):
+        from videoyard.render import wrap_text
+        # 詰めるだけだと「ラチャダー鉄道市 / 場」になっていた
+        lines = wrap_text("ラチャダー鉄道市場", 96, 920).split("\n")
+        self.assertEqual(len(lines), 2)
+        self.assertGreaterEqual(len(lines[-1]), 3, lines)
+
+    def test_line_count_is_not_increased(self):
+        from videoyard.render import _greedy_wrap, wrap_text
+        for text in ("ラチャダー鉄道市場", "ハネムーン in タイ",
+                     "ここが神場面だと思うんですよね本当に", "短い"):
+            usable_em = (920 * 0.9) / 96
+            greedy = len(_greedy_wrap(text, usable_em))
+            balanced = len(wrap_text(text, 96, 920).split("\n"))
+            self.assertEqual(balanced, greedy, text)
+
+    def test_content_is_preserved(self):
+        from videoyard.render import wrap_text
+        for text in ("ラチャダー鉄道市場", "ハネムーン in タイ", "あ" * 40):
+            self.assertEqual(wrap_text(text, 96, 920).replace("\n", ""), text)
+
+    def test_explicit_newlines_are_kept(self):
+        from videoyard.render import wrap_text
+        self.assertEqual(wrap_text("上\n下", 40, 1920), "上\n下")
+
+    def test_short_text_stays_on_one_line(self):
+        from videoyard.render import wrap_text
+        self.assertNotIn("\n", wrap_text("揚げエビ", 96, 920))
+
 if __name__ == "__main__":
     unittest.main()

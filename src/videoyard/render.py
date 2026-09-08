@@ -72,19 +72,49 @@ def wrap_text(text: str, font_size: int, frame_width: int) -> str:
     usable_em = (frame_width * 0.9) / font_size
     wrapped_lines: list[str] = []
     for line in text.split("\n"):
-        current = ""
-        current_em = 0.0
-        for ch in line:
-            em = _char_em(ch)
-            if current and current_em + em > usable_em:
-                wrapped_lines.append(current)
-                current = ch
-                current_em = em
-            else:
-                current += ch
-                current_em += em
-        wrapped_lines.append(current)
+        wrapped_lines += _wrap_line(line, usable_em)
     return "\n".join(wrapped_lines)
+
+
+def _greedy_wrap(line: str, usable_em: float) -> list[str]:
+    """入るだけ詰めて折る。行数の下限を知るために使う。"""
+    lines: list[str] = []
+    current = ""
+    current_em = 0.0
+    for ch in line:
+        em = _char_em(ch)
+        if current and current_em + em > usable_em:
+            lines.append(current)
+            current = ch
+            current_em = em
+        else:
+            current += ch
+            current_em += em
+    lines.append(current)
+    return lines
+
+
+def _wrap_line(line: str, usable_em: float) -> list[str]:
+    """行数は変えずに、各行の長さを均す。純粋関数(テストで検証)。
+
+    詰めるだけだと「ラチャダー鉄道市 / 場」のように最後の行へ 1 文字
+    だけ落ちて不格好になる(社長のタイ旅行の写真で実際にそうなった)。
+    必要な行数は変えずに、1 行あたりの幅を狭めて均等に配る。
+    """
+    lines = _greedy_wrap(line, usable_em)
+    if len(lines) <= 1:
+        return lines
+    total_em = sum(_char_em(ch) for ch in line)
+    # 行数を保ったまま入る、いちばん狭い幅を探す(均等配分に近づく)
+    target = total_em / len(lines)
+    width = usable_em
+    while width > target:
+        candidate = width - max(0.25, usable_em * 0.02)
+        if len(_greedy_wrap(line, candidate)) > len(lines):
+            break
+        width = candidate
+        lines = _greedy_wrap(line, width)
+    return lines
 
 
 def check_vertical_fit(wrapped: str, font_size: int, frame_height: int) -> None:

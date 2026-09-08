@@ -106,6 +106,12 @@ class CommandBuilding(unittest.TestCase):
         filter_arg = self._args(plan)[self._args(plan).index("-filter_complex") + 1]
         self.assertIn("s=1080x1920", filter_arg)
 
+    def test_sar_is_normalised_on_every_scene(self):
+        # 縦横比の違う写真が混ざると SAR が食い違い concat が止まる
+        filter_arg = self._args(_plan())[
+            self._args(_plan()).index("-filter_complex") + 1]
+        self.assertEqual(filter_arg.count("setsar=1"), 2)  # 全シーンに付く
+
     def test_bgm_added_with_fadeout(self):
         args = build_slideshow_command(
             _plan(), Path("/prod"), Path("/f.ttf"), {}, Path("/o.mp4"),
@@ -128,10 +134,14 @@ class RealSlideshow(unittest.TestCase):
             base = Path(tmp)
             photos = base / "photos"
             photos.mkdir()
-            for i, color in enumerate(("red", "green", "blue")):
+            # 縦横比をわざとバラバラにする。実写真のフォルダは普通そうで、
+            # 揃った画像だけでは SAR 不一致の不具合を踏めない(実測で発覚)
+            sizes = (("red", "640x480"), ("green", "480x800"),
+                     ("blue", "1024x768"))
+            for i, (color, size) in enumerate(sizes):
                 subprocess.run(
                     ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                     "-f", "lavfi", "-i", f"color=c={color}:s=640x480:d=0.1",
+                     "-f", "lavfi", "-i", f"color=c={color}:s={size}:d=0.1",
                      "-frames:v", "1", str(photos / f"p{i}.png")],
                     check=True, capture_output=True)
             directory = base / "prod"
