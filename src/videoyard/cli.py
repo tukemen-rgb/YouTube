@@ -25,6 +25,7 @@ from videoyard.cut import (
     cut,
 )
 from videoyard.cutplan import CutPlan, CutPlanError
+from videoyard.doctor import environment_summary, format_report, run_checks
 from videoyard.export import DEFAULT_FPS, rounding_note, write_exports
 from videoyard.fonts import FontError
 from videoyard.incremental import cut_incremental
@@ -196,6 +197,17 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
           f"python -m videoyard apply {directory} && "
           f"python -m videoyard cut {directory}")
     return 0
+
+
+def cmd_doctor(_args: argparse.Namespace) -> int:
+    """使う前の環境診断(S2)。足りないものと直し方を出す。"""
+    for line in environment_summary():
+        print(line)
+    print("\n環境の確認:")
+    checks = run_checks()
+    for line in format_report(checks):
+        print(line)
+    return 1 if any(c.failed for c in checks) else 0
 
 
 def cmd_export(directory: Path, args: argparse.Namespace) -> int:
@@ -483,6 +495,10 @@ def main(argv: list[str] | None = None) -> int:
     auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
+
+    doctor_cmd = sub.add_parser(
+        "doctor", help="使う前の環境診断(足りないものと直し方を出す)")
+    doctor_cmd.set_defaults(handler=cmd_doctor)
 
     export_cmd = sub.add_parser(
         "export", help="カット計画を EDL / FCPXML で書き出す"

@@ -176,3 +176,9 @@
 - S1 対応(最大の弱点): export コマンドで EDL(CMX3600)/ FCPXML 1.9 を書き出し、
   Premiere / DaVinci Resolve / Final Cut へタイムラインごと持ち出せるように。
   倍速区間は M2 / timeMap で表現。テスト 234 件、ruff クリーン。
+
+## サイクル 26(2026-09-08)
+
+- S2 対応: doctor コマンド(環境診断)。7 つの必須 ffmpeg フィルタ・フォント・
+  書き込み権限・空き容量を検査し、不足には OS 別の直し方を提示。
+  README に doctor と export の節を追加。テスト 251 件、ruff クリーン。

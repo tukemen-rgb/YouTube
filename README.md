@@ -28,6 +28,30 @@
 - 生成物すべてに来歴(provenance)とライセンス記録を付ける
 - モデルなし・ネットワークなしで動くオフラインのテスト経路を最初から持つ
 
+## 最初にやること: 環境診断
+
+```bash
+python -m videoyard doctor
+```
+
+Python / ffmpeg / 日本語フォント / 空き容量を確かめ、足りないものには
+**その環境で打つコマンド**を出す。全部 OK になってから先へ進む。
+
+## 編集ソフトへ持ち出す(v0.11: export)
+
+AI が作った編集を mp4 で完成させるだけでなく、**タイムラインごと
+Premiere Pro / DaVinci Resolve / Final Cut Pro に渡せる**。
+「AI で粗く切って、仕上げは使い慣れたソフトで」ができる。
+
+```bash
+python -m videoyard export productions/mygame --fps 30
+# → out/edit.edl(CMX3600)と out/edit.fcpxml(FCPXML 1.9)
+```
+
+テロップは FCPXML ではクリップ名、EDL ではコメント行に入る。≫(倍速)
+区間は EDL の M2 モーション記録 / FCPXML の timeMap で運ばれる。
+編集点は fps のフレームに丸め、ずれがあれば実行時に注記する。
+
 ## いちばん簡単な使い方(v0.9: auto 一発)
 
 録画 1 本から、分析 → カット → サムネ候補 → 説明文の下書きまでを
