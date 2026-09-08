@@ -367,10 +367,12 @@ class RealCut(unittest.TestCase):
         directory.mkdir()
         messages: list[str] = []
         analyze(directory, self.source, AnalyzeParams(), progress=messages.append)
-        # 工程の節目が順に知らされる(無言で数分待たせない: U1)
-        self.assertGreaterEqual(len(messages), 4)
+        # 工程の節目が順に知らされる(無言で数分待たせない: U1)。
+        # 測定は 1 パスにまとめたので節目は 3 つ(確認 → 測定 → 採点)。
+        self.assertGreaterEqual(len(messages), 3)
         self.assertIn("確認中", messages[0])
         self.assertTrue(any("測定中" in m for m in messages))
+        self.assertTrue(any("採点中" in m for m in messages))
 
     def test_target_seconds_trims_to_budget(self):
         from videoyard.analyze import AnalyzeParams, analyze

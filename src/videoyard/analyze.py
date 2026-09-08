@@ -24,6 +24,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,8 +35,7 @@ from videoyard.excitement import (
     ScoreWeights,
     bucketize,
     combine_features,
-    measure_loudness,
-    measure_motion,
+    measure_all,
     range_score,
     window_features,
 )
@@ -118,6 +118,14 @@ def run_detection(source: Path, params: AnalyzeParams, has_audio: bool,
     if result.returncode != 0:
         raise AnalyzeError(f"検出パスが失敗: {result.stderr[-300:]}")
     return result.stderr
+
+
+def detection_filters(params: AnalyzeParams, has_audio: bool) -> tuple[str, str]:
+    """検出に使うフィルタ指定 (映像, 音声)。純粋関数。"""
+    video = f"freezedetect=n={params.still_noise}:d={params.min_still}"
+    audio = (f"silencedetect=noise={params.silence_db}dB:d={params.min_silence}"
+             if has_audio else "")
+    return video, audio
 
 
 _FREEZE_START = re.compile(r"freeze_start:\s*([0-9.]+)")
@@ -529,19 +537,17 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
             min_still=params.min_still, min_cut=params.min_cut,
             min_keep=params.min_keep,
         )
-    report("静止画・無音の区間を検出中…")
-    stderr = run_detection(source, params, has_audio, ffmpeg=ffmpeg)
     duration = float(info["duration"])  # type: ignore[arg-type]
-
-    # 動き・音量の測定は 1 回だけ行い、静止判定と盛り上がり度の両方に使う。
-    report("動きの激しさを測定中…")
-    motion = bucketize(measure_motion(source, ffmpeg=ffmpeg), duration)
-    if has_audio:
-        report("音量を測定中…")
-    loudness = (
-        bucketize(measure_loudness(source, ffmpeg=ffmpeg), duration)
-        if has_audio else None
-    )
+    # 検出(静止・無音)と測定(動き・音量)を 1 パスにまとめる(S8)。
+    # 動画のデコードが分析でいちばん重いので、回数を減らすのが効く。
+    report("静止・無音の検出と、動き・音量の測定中(1 パス)…")
+    detect_video, detect_audio = detection_filters(params, has_audio)
+    with tempfile.TemporaryDirectory(prefix="videoyard-measure-") as tmp:
+        stderr, raw_motion, raw_loudness = measure_all(
+            source, detect_video=detect_video, detect_audio=detect_audio,
+            has_audio=has_audio, out_dir=Path(tmp), ffmpeg=ffmpeg)
+    motion = bucketize(raw_motion, duration)
+    loudness = bucketize(raw_loudness, duration) if has_audio else None
 
     # 静止 = freezedetect(完全一致に近い)+ 動き量による「ほぼ静止」の補完
     static = parse_freeze(stderr, duration) + low_motion_intervals(
