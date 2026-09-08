@@ -84,3 +84,36 @@
 - https://bigvu.tv/blog/ja/opus-clips%E3%81%A8%E3%81%AF-...(OpusClip 日本語字幕非対応・当たり外れ)
 - https://note.com/aidynote/n/nae817c3cfd83(Opus Clip vs Vrew vs CapCut)
 - https://www.itreview.jp/products/vrew/reviews
+
+
+---
+
+# 縦動画のセーフゾーン(2026-09-08 調査、S5 の根拠)
+
+スマホのアプリ UI が映像に重なるため、そこに置いた文字は読めない。
+1080×1920 を基準にした各社の目安:
+
+| 領域 | 空ける画素 | 何が重なるか |
+| --- | --- | --- |
+| 下端 | 300px | TikTok のキャプション欄(3 アプリで最も広い) |
+| 右端 | 120px | いいね・コメント・シェアのボタン列 |
+| 上端 | 120px | 検索・おすすめの帯 |
+| 右下 | 180×80px | YouTube の登録ボタン(2026 年は以前より大きい) |
+
+3 アプリ共通で安全な最大公約数は **中央 900×1160**。YouTube Shorts 単体
+なら 888×1500。videoyard は下端 300 / 右端 120 / 上端 120 / 左端 40 を
+空ける(共通の最大公約数を含む)。
+
+**実測で見つかった不具合(2026-09-08):** photo --vertical のテロップは
+1080×1920 の最下端に描かれ、下端 300px と右端 120px の両方に掛かって
+いた。スマホでは完全に隠れる。cut --vertical も、素材が縦の場合は
+同じ問題が起きる(16:9 素材は帯が付くのでたまたま安全だった)。
+サイクル 29 で safezone.py を作り、両方を直した。
+
+## 出典
+
+- https://kreatli.com/guides/safe-zone-guide
+- https://postplanify.com/blog/social-media-safe-zones-2026-complete-guide
+- https://syllaby.io/blog/aspect-ratios-safe-zones-shorts-reels-tiktok/
+- https://fluxtoolkit.com/blog/tiktok-safe-zone-overlay-template-2026
+- https://postplanify.com/tools/youtube-shorts-safe-zone-checker

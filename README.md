@@ -132,6 +132,7 @@ python -m videoyard apply productions/mygame   # シートを計画に反映
 # 3. 確定 → 切ってつないだ out/video.mp4 とサムネ候補 3 枚ができる
 python -m videoyard cut productions/mygame
 #    --vertical   ショート用 9:16(1080x1920、ぼかし背景+中央配置)
+#                 テロップはスマホ UI(下端300px・右端120px)を避けて配置
 #    --fast       速さ優先(2.6 倍速目安。バイト単位の再現性は非保証)
 #    --bgm 曲.mp3 手持ち BGM をゲーム音の下に(--bgm-db で音量、既定 -16)
 #    --transition dip  つなぎ目に短い暗転(既定はハードカット)

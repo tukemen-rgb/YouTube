@@ -34,6 +34,7 @@ from videoyard.render import (
     _sha256,
     wrap_text,
 )
+from videoyard.safezone import bottom_text_margin, text_wrap_width
 
 PHOTO_FORMAT_VERSION = 1
 MAX_PHOTOS = 200
@@ -192,6 +193,8 @@ def _scene_filter(index: int, scene: PhotoScene, plan: PhotoPlan,
     )
     if telop_path is not None:
         font_size = max(16, int(h * TELOP_FONT_RATIO))
+        # 縦画面ではスマホ UI に隠れない高さへ上げる(S5)
+        margin = bottom_text_margin(w, h, minimum=max(20, font_size // 2))
         chain += (
             f",drawtext=fontfile={_escape_filter_value(str(font_path))}"
             f":textfile={_escape_filter_value(str(telop_path))}"
@@ -199,7 +202,7 @@ def _scene_filter(index: int, scene: PhotoScene, plan: PhotoPlan,
             f":fontsize={font_size}:line_spacing={font_size // 4}"
             ":box=1:boxcolor=0x000000@0.5"
             f":boxborderw={max(6, font_size // 4)}"
-            f":x=(w-text_w)/2:y=h-text_h-{max(20, font_size // 2)}"
+            f":x=(w-text_w)/2:y=h-text_h-{margin}"
         )
     chain += f",format=yuv420p[s{index}]"
     return chain
@@ -213,7 +216,9 @@ def write_photo_telops(plan: PhotoPlan, text_dir: Path,
     for index, scene in enumerate(plan.scenes):
         if not scene.telop:
             continue
-        wrapped = wrap_text(scene.telop, font_size, plan.width)
+        # 右のボタン列に食い込まない幅で折り返す(S5)
+        wrapped = wrap_text(scene.telop, font_size,
+                            text_wrap_width(plan.width, plan.height))
         path = text_dir / f"phototelop_{index:03d}.txt"
         path.write_text(wrapped, encoding="utf-8")
         paths[index] = path

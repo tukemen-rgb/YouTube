@@ -26,6 +26,7 @@ from videoyard.render import (
     _sha256,
     wrap_text,
 )
+from videoyard.safezone import source_bottom_margin, source_wrap_width
 
 #: テロップの見た目。位置・色は計画(cutplan)の区間ごとに選べる(C2)。
 TELOP_FONT_SIZE_RATIO = 0.05   # 画面高さに対する文字サイズ(横動画)
@@ -91,7 +92,8 @@ def write_telop_files(plan: CutPlan, text_dir: Path,
     for index, seg in enumerate(plan.segments):
         if seg.action != "keep" or not seg.telop:
             continue
-        wrapped = wrap_text(seg.telop, font_size, plan.width)
+        wrap_width = (source_wrap_width(plan.width) if vertical else plan.width)
+        wrapped = wrap_text(seg.telop, font_size, wrap_width)
         lines = wrapped.count("\n") + 1
         if lines * line_height > plan.height * max_ratio:
             raise CutError(
@@ -108,6 +110,9 @@ def _drawtext(seg: PlanSegment, plan: CutPlan, font_path: Path, text_path: Path,
               vertical: bool = False) -> str:
     font_size = telop_font_size(plan, vertical=vertical)
     margin = max(20, font_size // 2)
+    if vertical and seg.telop_pos != "top":
+        # 縦変換後にスマホ UI へ潜り込まない余白を、変換前の座標で確保(S5)
+        margin = source_bottom_margin(plan.width, plan.height, minimum=margin)
     y = str(margin) if seg.telop_pos == "top" else f"h-text_h-{margin}"
     color = "0x" + seg.telop_color[1:]
     return (
