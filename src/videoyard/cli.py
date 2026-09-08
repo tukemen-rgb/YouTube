@@ -148,7 +148,8 @@ def cmd_analyze(directory: Path, args: argparse.Namespace) -> int:
     print(f"盛り上がりグラフ: {directory / 'excitement.svg'}(ブラウザで開ける)")
     for line in format_plan_report(plan):
         print(line)
-    for advice in diagnose(plan, params, plan.has_audio):
+    for advice in diagnose(plan, params, plan.has_audio,
+                           container_duration=plan.container_duration):
         print(f"診断: {advice}")
     print(f"\n案を直すなら {directory / 'cutplan.sheet.txt'} の ○× とテロップを"
           "書き換えて:")
@@ -183,7 +184,8 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
                    weights=weights, progress=show_progress)
     for line in format_plan_report(plan):
         print(line)
-    for advice in diagnose(plan, params, plan.has_audio):
+    for advice in diagnose(plan, params, plan.has_audio,
+                           container_duration=plan.container_duration):
         print(f"診断: {advice}")
 
     show_progress("カットと書き出し中…")

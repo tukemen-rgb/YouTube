@@ -79,6 +79,26 @@ class AnalyzeParams:
 
 # ---- ffmpeg / ffprobe の呼び出し ------------------------------------------
 
+def video_duration(info: dict, container_duration: float) -> float:
+    """扱ってよい長さ。**映像がある範囲**までしか編集できない。純粋関数。
+
+    コンテナ全体の長さ(format.duration)は音声の長さで決まることがある。
+    録画中にフレームが落ちたり、録画ソフトが落ちたりすると、音声だけが
+    先まで続いて映像が短い動画ができる。コンテナの長さを信じると、
+    映像の無い時刻を切り出そうとして失敗する(実測: サムネ抽出が
+    「Output file is empty」で停止)。短いほうを採る。
+    """
+    video = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
+    for stream in video:
+        try:
+            stream_duration = float(stream.get("duration", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if stream_duration > 0:
+            return min(container_duration, stream_duration)
+    return container_duration
+
+
 def probe_source(source: Path, ffprobe: str = "ffprobe") -> dict[str, object]:
     """動画の長さ・画面サイズ・音声の有無を読む。"""
     if shutil.which(ffprobe) is None:
@@ -96,11 +116,13 @@ def probe_source(source: Path, ffprobe: str = "ffprobe") -> dict[str, object]:
     video = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
     if not video:
         raise AnalyzeError("映像ストリームがない")
-    duration = float(info.get("format", {}).get("duration", 0.0))
-    if duration <= 0:
+    container = float(info.get("format", {}).get("duration", 0.0))
+    if container <= 0:
         raise AnalyzeError("動画の長さが読めない")
+    duration = video_duration(info, container)
     return {
         "duration": duration,
+        "container_duration": container,
         "width": int(video[0]["width"]),
         "height": int(video[0]["height"]),
         "has_audio": any(s.get("codec_type") == "audio" for s in info["streams"]),
@@ -410,13 +432,22 @@ def trim_to_target(segments: list[PlanSegment], scores: list[float],
             chunks.append((range_score(scores, cursor, end), cursor, end, seg))
             cursor = end
 
+    # 点数の高い小片から、**目標を超えない範囲で**採る。「まだ余りが
+    # あるから」と大きい小片を足すと目標を大きく超える(実測: 目標 3 秒
+    # に対して 5.9 秒。60 秒のショートを狙って 64 秒になると、YouTube の
+    # ショート枠から外れる)。1 つも入らないときだけ、いちばん点数の
+    # 高い小片を 1 つ入れる(空の動画にはしない)。
     chosen: list[tuple[float, float, PlanSegment]] = []
     remaining = target_seconds
-    for _score, start, end, parent in sorted(chunks, key=lambda c: -c[0]):
-        if remaining <= 0:
-            break
+    ranked = sorted(chunks, key=lambda c: (-c[0], c[1]))
+    for _score, start, end, parent in ranked:
+        length = end - start
+        if length <= remaining + 1e-6:
+            chosen.append((start, end, parent))
+            remaining -= length
+    if not chosen:
+        _score, start, end, parent = ranked[0]
         chosen.append((start, end, parent))
-        remaining -= end - start
     chosen.sort()
     # 隣り合う採用小片は 1 区間にまとめる(不要な切れ目とフェードを作らない)
     merged: list[tuple[float, float, PlanSegment]] = []
@@ -452,12 +483,32 @@ def trim_to_target(segments: list[PlanSegment], scores: list[float],
 
 # ---- 分析結果の自己診断(U13) --------------------------------------------
 
-def diagnose(plan: CutPlan, params: AnalyzeParams, has_audio: bool) -> list[str]:
+#: 映像と音声の長さの差がこれを超えたら知らせる(秒)。
+DURATION_MISMATCH_SECONDS = 1.0
+
+
+def diagnose(plan: CutPlan, params: AnalyzeParams, has_audio: bool,
+             container_duration: float | None = None) -> list[str]:
     """「この結果は変では?」への気づきと、回すべきノブの提案。純粋関数。
 
     診断は助言であって判断ではない。計画は人が直す(いつもの分担)。
     """
     advice: list[str] = []
+    if (container_duration is not None
+            and container_duration - plan.duration > DURATION_MISMATCH_SECONDS):
+        advice.append(
+            f"映像は {plan.duration:.0f} 秒で終わっているのに、"
+            f"ファイル全体は {container_duration:.0f} 秒ある"
+            f"(差 {container_duration - plan.duration:.0f} 秒)。"
+            "録画中にフレームが落ちたか、録画が途中で切れた可能性がある。"
+            "映像のある範囲だけで計画した。")
+    target = params.target_seconds
+    if target is not None and plan.kept_seconds > target + 0.05:
+        advice.append(
+            f"目標 {target:.0f} 秒に収まらず {plan.kept_seconds:.0f} 秒になった。"
+            f"切り出しの粒({params.chunk_seconds:.0f} 秒)が目標に対して"
+            "大きすぎる。--chunk-seconds を小さくすると近づく"
+            "(短くしすぎると細切れになる)。")
     kept_ratio = plan.kept_seconds / plan.duration if plan.duration else 1.0
     if kept_ratio < 0.2:
         advice.append(
@@ -624,6 +675,7 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
         has_audio=has_audio,
         mode=params.mode,
         segments=tuple(segments),
+        container_duration=float(info.get("container_duration", 0.0)),  # type: ignore[arg-type]
     )
     plan.save(production_dir / "cutplan.json")
     # 「AI の案そのまま」の控えと、窓ごとの測定値も残す。人が cutplan.json

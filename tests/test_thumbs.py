@@ -93,5 +93,26 @@ class RealExtraction(unittest.TestCase):
                 extract_thumbnails(directory, count=1, text="あ" * 21)  # 文字数超過
 
 
+class FrameExtractionFallback(unittest.TestCase):
+    """狙った時刻にフレームが無くても、手前へ戻して取り直すこと。"""
+
+    def test_retries_earlier_times(self):
+        from videoyard.thumbs import _RETRY_OFFSETS
+        # 手前へ戻す候補が用意されている(最初は狙った時刻ちょうど)
+        self.assertEqual(_RETRY_OFFSETS[0], 0.0)
+        self.assertGreater(len(_RETRY_OFFSETS), 1)
+        self.assertEqual(list(_RETRY_OFFSETS), sorted(_RETRY_OFFSETS))
+
+    def test_gives_up_with_a_helpful_message(self):
+        import tempfile
+        from pathlib import Path as P
+
+        from videoyard.thumbs import _extract_frame
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = P(tmp) / "no_such.mp4"
+            out = P(tmp) / "f.png"
+            self.assertIsNone(_extract_frame(missing, 1.0, out, "ffmpeg"))
+
+
 if __name__ == "__main__":
     unittest.main()

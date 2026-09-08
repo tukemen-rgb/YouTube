@@ -81,6 +81,31 @@ def title_drawtext(text_path: Path, font_path: Path, width: int, height: int) ->
     )
 
 
+#: フレームが取れなかったときに手前へ戻す秒数。可変フレームレートや
+#: 映像が音声より短い録画では、狙った時刻にフレームが無いことがある。
+_RETRY_OFFSETS = (0.0, 0.5, 1.5, 3.0)
+
+
+def _extract_frame(source: Path, time: float, path: Path,
+                   ffmpeg: str) -> float | None:
+    """指定時刻のフレームを 1 枚書き出す。取れた時刻を返す(駄目なら None)。
+
+    少しずつ手前へ戻して試す。動画の終わり際は、狙った時刻にフレームが
+    無いことがある(実測: 映像が音声より短い録画で抽出が停止した)。
+    """
+    for offset in _RETRY_OFFSETS:
+        at = max(0.0, time - offset)
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-nostdin", "-y",
+             "-ss", f"{at:.3f}", "-i", str(source),
+             "-frames:v", "1", str(path)],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and path.is_file() and path.stat().st_size > 0:
+            return at
+    return None
+
+
 def extract_thumbnails(production_dir: Path, count: int = DEFAULT_COUNT,
                        text: str = "", ffmpeg: str = "ffmpeg") -> list[Path]:
     """cutplan と分析結果からサムネ候補を out/thumbnails/ に書く。"""
@@ -122,15 +147,12 @@ def extract_thumbnails(production_dir: Path, count: int = DEFAULT_COUNT,
     records = []
     for rank, (time, score) in enumerate(picks, start=1):
         path = out_dir / f"thumb_{rank}.png"
-        result = subprocess.run(
-            [ffmpeg, "-hide_banner", "-nostdin", "-y",
-             "-ss", f"{time:.3f}", "-i", str(source),
-             "-frames:v", "1", str(path)],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0 or not path.is_file():
-            tail = "\n".join(result.stderr.splitlines()[-5:])
-            raise ThumbsError(f"フレーム抽出が失敗(t={time:.1f}s):\n{tail}")
+        result = _extract_frame(source, time, path, ffmpeg)
+        if result is None:
+            raise ThumbsError(
+                f"フレーム抽出が失敗(t={time:.1f}s 付近)。"
+                "映像より音声が長い録画かもしれない(analyze をやり直すと"
+                "映像の長さで計画し直す)。")
         written.append(path)
         record = {"rank": rank, "time_seconds": round(time, 3),
                   "excite": round(score), "file": path.name}

@@ -186,6 +186,124 @@ class Highlight(unittest.TestCase):
         self.assertEqual(mark_highlight(segments, {}), segments)
 
 
+class TargetSeconds(unittest.TestCase):
+    """尺調整は目標を超えない(実測で 3 秒目標が 5.9 秒になっていた)。"""
+
+    def _segments(self, keeps):
+        from videoyard.cutplan import PlanSegment
+        return [PlanSegment(start=s, end=e, action="keep") for s, e in keeps]
+
+    def test_does_not_overshoot(self):
+        from videoyard.analyze import trim_to_target
+        segments = self._segments([(0.0, 6.0), (10.0, 16.0)])
+        scores = [50.0] * 40  # 0.5 秒窓で 20 秒ぶん
+        out = trim_to_target(segments, scores, target_seconds=5.0,
+                             chunk_seconds=3.0)
+        kept = sum(s.end - s.start for s in out if s.action == "keep")
+        self.assertLessEqual(kept, 5.0 + 1e-6)
+        self.assertGreater(kept, 0.0)
+
+    def test_keeps_something_even_when_nothing_fits(self):
+        # 粒が目標より大きい。空の動画にはせず 1 つだけ残す
+        from videoyard.analyze import trim_to_target
+        segments = self._segments([(0.0, 6.0)])
+        out = trim_to_target(segments, [50.0] * 12, target_seconds=1.0,
+                             chunk_seconds=6.0)
+        kept = [s for s in out if s.action == "keep"]
+        self.assertEqual(len(kept), 1)
+
+    def test_higher_scoring_chunks_win(self):
+        from videoyard.analyze import trim_to_target
+        segments = self._segments([(0.0, 4.0), (10.0, 14.0)])
+        # 後半(窓 20〜28)の点数を高くする
+        scores = [10.0] * 20 + [90.0] * 8 + [10.0] * 12
+        out = trim_to_target(segments, scores, target_seconds=4.0,
+                             chunk_seconds=4.0)
+        kept = [s for s in out if s.action == "keep"]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].start, 10.0)
+
+    def test_no_trim_when_target_is_generous(self):
+        from videoyard.analyze import trim_to_target
+        segments = self._segments([(0.0, 4.0)])
+        out = trim_to_target(segments, [50.0] * 8, target_seconds=99.0)
+        self.assertEqual(out, segments)
+
+    def test_overshoot_is_reported(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import CutPlan, PlanSegment
+        plan = CutPlan(
+            source_path="/s.mp4", source_sha256="0" * 64, duration=100.0,
+            width=640, height=360, has_audio=True, mode="static_or_silent",
+            segments=(PlanSegment(start=0.0, end=30.0, action="cut"),
+                      PlanSegment(start=30.0, end=100.0, action="keep")),
+        )
+        advice = diagnose(plan, AnalyzeParams(target_seconds=60.0),
+                          has_audio=True)
+        self.assertTrue(any("収まらず" in a for a in advice), advice)
+
+
+class VideoDuration(unittest.TestCase):
+    """映像より音声が長い録画で、映像のある範囲までしか扱わないこと。
+
+    実測(2026-09-08): コンテナの長さ(6 秒)を信じてサムネを 3.2 秒で
+    抜こうとし、映像が 2 秒で終わっていたため「Output file is empty」で
+    停止した。録画中のフレーム落ちや録画の中断で普通に起きる。
+    """
+
+    def _info(self, video_duration, audio=True):
+        streams = [{"codec_type": "video", "width": 640, "height": 360}]
+        if video_duration is not None:
+            streams[0]["duration"] = str(video_duration)
+        if audio:
+            streams.append({"codec_type": "audio", "duration": "6.0"})
+        return {"streams": streams}
+
+    def test_shorter_video_stream_wins(self):
+        from videoyard.analyze import video_duration
+        self.assertEqual(video_duration(self._info(2.0), 6.0), 2.0)
+
+    def test_container_wins_when_video_is_longer(self):
+        # 映像のほうが長いと言われても、コンテナを超えては扱わない
+        from videoyard.analyze import video_duration
+        self.assertEqual(video_duration(self._info(9.0), 6.0), 6.0)
+
+    def test_missing_stream_duration_falls_back(self):
+        from videoyard.analyze import video_duration
+        self.assertEqual(video_duration(self._info(None), 6.0), 6.0)
+
+    def test_unreadable_stream_duration_falls_back(self):
+        from videoyard.analyze import video_duration
+        info = {"streams": [{"codec_type": "video", "duration": "N/A"}]}
+        self.assertEqual(video_duration(info, 6.0), 6.0)
+
+    def test_mismatch_is_reported_to_the_user(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import CutPlan, PlanSegment
+        plan = CutPlan(
+            source_path="/s.mp4", source_sha256="0" * 64, duration=2.0,
+            width=640, height=360, has_audio=True, mode="static_or_silent",
+            segments=(PlanSegment(start=0.0, end=2.0, action="keep"),),
+            container_duration=6.0,
+        )
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True,
+                          container_duration=6.0)
+        self.assertTrue(any("録画が途中で切れた" in a for a in advice), advice)
+
+    def test_no_message_when_lengths_agree(self):
+        from videoyard.analyze import diagnose
+        from videoyard.cutplan import CutPlan, PlanSegment
+        plan = CutPlan(
+            source_path="/s.mp4", source_sha256="0" * 64, duration=100.0,
+            width=640, height=360, has_audio=True, mode="static_or_silent",
+            segments=(PlanSegment(start=0.0, end=40.0, action="cut"),
+                      PlanSegment(start=40.0, end=100.0, action="keep")),
+        )
+        advice = diagnose(plan, AnalyzeParams(), has_audio=True,
+                          container_duration=100.1)
+        self.assertFalse(any("録画が途中" in a for a in advice), advice)
+
+
 class Diagnosis(unittest.TestCase):
     """自己診断(U13)— 極端な結果に気づいてノブを提案する。"""
 

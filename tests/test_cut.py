@@ -381,7 +381,10 @@ class RealCut(unittest.TestCase):
         directory.mkdir()
         plan = analyze(directory, self.source,
                        AnalyzeParams(target_seconds=3.0, chunk_seconds=2.0))
-        self.assertLessEqual(plan.kept_seconds, 3.0 + 2.0)
+        # 目標は「超えない」が契約。以前は超えても通る緩い判定だった
+        # (実測で 5.9 秒になっていたのを見逃していた)
+        self.assertLessEqual(plan.kept_seconds, 3.0 + 1e-6)
+        self.assertGreater(plan.kept_seconds, 0.0)
         self.assertGreater(plan.kept_seconds, 0.0)
 
     def test_vertical_cut_outputs_1080x1920(self):

@@ -100,6 +100,9 @@ class CutPlan:
     mode: str
     segments: tuple[PlanSegment, ...]
     format_version: int = FORMAT_VERSION
+    #: ファイル全体の長さ。duration(映像がある範囲)と食い違うことが
+    #: あり、その差は「録画が途中で切れた」の手がかりになる。0 は未記録。
+    container_duration: float = 0.0
 
     def __post_init__(self) -> None:
         _require(self.format_version == FORMAT_VERSION, f"format_version は {FORMAT_VERSION}")
@@ -152,6 +155,8 @@ class CutPlan:
             "has_audio": self.has_audio,
             "mode": self.mode,
             "segments": [s.to_dict() for s in self.segments],
+            **({"container_duration": self.container_duration}
+               if self.container_duration else {}),
         }
 
     def to_json(self) -> str:
@@ -162,7 +167,8 @@ class CutPlan:
         _require(isinstance(data, dict), "cutplan はオブジェクト")
         assert isinstance(data, dict)
         known = {"format_version", "source_path", "source_sha256", "duration",
-                 "width", "height", "has_audio", "mode", "segments"}
+                 "width", "height", "has_audio", "mode", "segments",
+                 "container_duration"}
         unknown = set(data) - known
         _require(not unknown, f"未知のキー: {sorted(unknown)}")
         raw_segments = data.get("segments")
