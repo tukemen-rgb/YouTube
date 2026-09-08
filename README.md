@@ -161,6 +161,8 @@ python -m videoyard cut productions/mygame
 #    --fast       速さ優先(2.6 倍速目安。バイト単位の再現性は非保証)
 #    --bgm 曲.mp3 手持ち BGM をゲーム音の下に(--bgm-db で音量、既定 -16)
 #    --transition dip  つなぎ目に短い暗転(既定はハードカット)
+#    --denoise light   声を聞き取りやすくする(空調・PCファンの音を減らす)
+#                      実測: ノイズだけの音は 24dB 減り、声はほぼそのまま
 
 # 3'. テロップだけ直して作り直すときは差分再エンコードが速い(3 倍超・実測)
 python -m videoyard cut productions/mygame --incremental

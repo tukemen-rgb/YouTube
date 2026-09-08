@@ -28,6 +28,7 @@ from videoyard.batch import (
 from videoyard.config import SETTING_TYPES, resolve_settings
 from videoyard.cut import (
     BGM_DEFAULT_GAIN_DB,
+    DENOISE_LEVELS,
     SHORTS_RECOMMENDED_SECONDS,
     TRANSITIONS,
     CutError,
@@ -165,7 +166,7 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
     directory.mkdir(parents=True, exist_ok=True)
     args = fallbacks(apply_config(args, directory),
                      shorts=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB,
-                     hint="", text="")
+                     hint="", text="", denoise="none")
     if not (directory / "job.json").is_file():
         ProductionJob.create(directory, title=f"{args.source.name} のダイジェスト")
     params = AnalyzeParams(
@@ -188,7 +189,8 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
     show_progress("カットと書き出し中…")
     job = ProductionJob.load(directory)
     manifest = cut(directory, vertical=args.shorts, fast=args.fast,
-                   bgm=args.bgm, bgm_gain_db=args.bgm_db)
+                   bgm=args.bgm, bgm_gain_db=args.bgm_db,
+                   denoise=args.denoise)
     job.mark_done("assembly", note="videoyard auto")
     # 学習用の添削は記録しない: auto は人の確認を経ていない案そのままで、
     # 「AI の案=人の正解」と記録すると採点の学習データが汚れる。
@@ -218,7 +220,8 @@ def cmd_batch(root: Path, args: argparse.Namespace) -> int:
     """録画フォルダをまとめて処理する(S3)。1 本失敗しても止まらない。"""
     root.mkdir(parents=True, exist_ok=True)
     args = fallbacks(apply_config(args, root),
-                     shorts=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB)
+                     shorts=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB,
+                     denoise="none")
     videos = collect_videos(args.sources)
     items = plan_items(videos, root)
     print(f"動画 {len(items)} 本を {root} に処理する"
@@ -235,7 +238,8 @@ def cmd_batch(root: Path, args: argparse.Namespace) -> int:
         analyze(item.directory, item.source, params, weights=weights)
         job = ProductionJob.load(item.directory)
         manifest = cut(item.directory, vertical=args.shorts, fast=args.fast,
-                       bgm=args.bgm, bgm_gain_db=args.bgm_db)
+                       bgm=args.bgm, bgm_gain_db=args.bgm_db,
+                       denoise=args.denoise)
         job.mark_done("assembly", note="videoyard batch")
         extract_thumbnails(item.directory)
         write_description(item.directory)
@@ -440,7 +444,7 @@ def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
     args = fallbacks(apply_config(args, directory),
                      vertical=False, fast=False, incremental=False,
                      no_loudnorm=False, bgm_db=BGM_DEFAULT_GAIN_DB,
-                     transition="none")
+                     transition="none", denoise="none")
     job = ProductionJob.load(directory)
     if args.incremental:
         if args.vertical:
@@ -455,7 +459,7 @@ def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
         manifest = cut(directory, normalize_loudness=not args.no_loudnorm,
                        vertical=args.vertical, fast=args.fast,
                        bgm=args.bgm, bgm_gain_db=args.bgm_db,
-                       transition=args.transition)
+                       transition=args.transition, denoise=args.denoise)
     job.mark_done("assembly", note="videoyard cut")
     print(f"出力: {directory / 'out' / 'video.mp4'}")
     if args.vertical:
@@ -575,6 +579,9 @@ def main(argv: list[str] | None = None) -> int:
     cut_cmd.add_argument("--incremental", action="store_true", default=None,
                          help="差分再エンコード: 変わっていない区間のエンコードを"
                               "再利用して再カットを速くする(--vertical とは併用不可)")
+    cut_cmd.add_argument("--denoise", choices=tuple(DENOISE_LEVELS),
+                           default=None,
+                           help="声を聞き取りやすくする(既定 none)")
     cut_cmd.add_argument("--profile", default=None,
                            help="videoyard.json のプロファイル名")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
@@ -600,6 +607,9 @@ def main(argv: list[str] | None = None) -> int:
                           help="この秒数に収める(--shorts なら既定 60)")
     auto_cmd.add_argument("--hint", default=None, help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default=None, help="サムネに重ねるタイトル文字")
+    auto_cmd.add_argument("--denoise", choices=tuple(DENOISE_LEVELS),
+                           default=None,
+                           help="声を聞き取りやすくする(既定 none)")
     auto_cmd.add_argument("--profile", default=None,
                            help="videoyard.json のプロファイル名")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
@@ -617,6 +627,9 @@ def main(argv: list[str] | None = None) -> int:
                            help="出来ている分も作り直す(既定は飛ばす)")
     batch_cmd.add_argument("--bgm", type=Path, default=None)
     batch_cmd.add_argument("--bgm-db", type=float, default=None)
+    batch_cmd.add_argument("--denoise", choices=tuple(DENOISE_LEVELS),
+                           default=None,
+                           help="声を聞き取りやすくする(既定 none)")
     batch_cmd.add_argument("--profile", default=None,
                            help="videoyard.json のプロファイル名")
     batch_cmd.set_defaults(handler=lambda a: cmd_batch(a.directory, a))

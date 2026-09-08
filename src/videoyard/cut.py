@@ -67,6 +67,21 @@ BGM_FADE_OUT_SECONDS = 1.5
 TRANSITIONS = ("none", "dip")
 VIDEO_FADE_SECONDS = 0.15
 
+#: 声を聞き取りやすくする処理(S7)。エアコンの唸り・PC ファン・
+#: マイクのサーというノイズを減らす。**音を作り変える処理なので既定は
+#: off**。掛けたかどうかは来歴 manifest に必ず残す。
+#:
+#: * highpass … 低い唸り(空調・机の振動)を切る
+#: * afftdn … 定常的なノイズを周波数ごとに引く(nr=下げ幅 dB /
+#:   nf=ノイズ床の見積り dB)
+#:
+#: 強くするほど声がこもるので、既定の light は控えめ。
+DENOISE_LEVELS: dict[str, tuple[str, ...]] = {
+    "none": (),
+    "light": ("highpass=f=80", "afftdn=nr=12:nf=-30"),
+    "strong": ("highpass=f=100", "afftdn=nr=24:nf=-25"),
+}
+
 
 class CutError(RenderError):
     """カットが完了しなかった。出力は残っていない。"""
@@ -140,11 +155,15 @@ def build_command(
     bgm: Path | None = None,
     bgm_gain_db: float = -16.0,
     transition: str = "none",
+    denoise: str = "none",
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
     if transition not in TRANSITIONS:
         raise CutError(f"transition は {TRANSITIONS} のどれか: {transition}")
+    if denoise not in DENOISE_LEVELS:
+        raise CutError(
+            f"denoise は {tuple(DENOISE_LEVELS)} のどれか: {denoise}")
     render_indexes = [i for i, s in enumerate(plan.segments)
                       if s.action in ("keep", "speed")]
     if not render_indexes:
@@ -201,6 +220,13 @@ def build_command(
         audio_label = "[outa]"
     else:
         filters.append(f"{''.join(labels_v)}concat=n={n}:v=1:a=0[outv]")
+
+    if audio_label is not None and denoise != "none":
+        # 元の音(ゲーム音+声)だけに掛ける。BGM を混ぜる前に済ませる
+        # (せっかく選んだ BGM をノイズ扱いして削らないため)。
+        chain = ",".join(DENOISE_LEVELS[denoise])
+        filters.append(f"{audio_label}{chain}[aclean]")
+        audio_label = "[aclean]"
 
     if bgm is not None:
         # BGM はゲーム音の「下」に控えめに敷く(C10)。動画より短ければ
@@ -272,7 +298,8 @@ def build_command(
 def cut(production_dir: Path, normalize_loudness: bool = True,
         vertical: bool = False, fast: bool = False,
         bgm: Path | None = None, bgm_gain_db: float = BGM_DEFAULT_GAIN_DB,
-        transition: str = "none", ffmpeg: str = "ffmpeg") -> dict[str, object]:
+        transition: str = "none", denoise: str = "none",
+        ffmpeg: str = "ffmpeg") -> dict[str, object]:
     """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
@@ -300,7 +327,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
                          normalize_loudness=normalize_loudness, vertical=vertical,
                          fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db,
-                         transition=transition, ffmpeg=ffmpeg)
+                         transition=transition, denoise=denoise, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -329,6 +356,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "bgm_sha256": _sha256(bgm) if bgm is not None else "",
         "bgm_gain_db": bgm_gain_db if bgm is not None else None,
         "transition": transition,
+        "denoise": denoise,
         "command": args,
     }
     tmp_path.replace(final_path)

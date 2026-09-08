@@ -49,6 +49,7 @@ SETTING_TYPES: dict[str, type | tuple[type, ...]] = {
     "bgm": str,
     "bgm_db": (int, float),
     "transition": str,
+    "denoise": str,
     "mode": str,
     "target_seconds": (int, float),
     "silence_db": (int, float),
