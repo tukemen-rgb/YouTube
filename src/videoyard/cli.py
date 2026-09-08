@@ -25,6 +25,7 @@ from videoyard.batch import (
     run_batch,
     write_report,
 )
+from videoyard.config import SETTING_TYPES, resolve_settings
 from videoyard.cut import (
     BGM_DEFAULT_GAIN_DB,
     SHORTS_RECOMMENDED_SECONDS,
@@ -162,10 +163,13 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
     計画・シートは全部残るので、気に入らなければ sheet → apply → cut。
     """
     directory.mkdir(parents=True, exist_ok=True)
+    args = fallbacks(apply_config(args, directory),
+                     shorts=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB,
+                     hint="", text="")
     if not (directory / "job.json").is_file():
         ProductionJob.create(directory, title=f"{args.source.name} のダイジェスト")
     params = AnalyzeParams(
-        target_seconds=60.0 if args.shorts else None,
+        target_seconds=args.target_seconds or (60.0 if args.shorts else None),
     )
     started = time.monotonic()
 
@@ -212,6 +216,9 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
 
 def cmd_batch(root: Path, args: argparse.Namespace) -> int:
     """録画フォルダをまとめて処理する(S3)。1 本失敗しても止まらない。"""
+    root.mkdir(parents=True, exist_ok=True)
+    args = fallbacks(apply_config(args, root),
+                     shorts=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB)
     videos = collect_videos(args.sources)
     items = plan_items(videos, root)
     print(f"動画 {len(items)} 本を {root} に処理する"
@@ -313,6 +320,9 @@ def cmd_shorts(directory: Path, args: argparse.Namespace) -> int:
 def cmd_photo(directory: Path, args: argparse.Namespace) -> int:
     """写真一式 → スライドショー動画(U18)。計画は photoplan.json に残す。"""
     directory.mkdir(parents=True, exist_ok=True)
+    args = fallbacks(apply_config(args, directory),
+                     vertical=False, fast=False, bgm_db=BGM_DEFAULT_GAIN_DB,
+                     seconds=DEFAULT_SECONDS_PER_PHOTO)
     plan_path = directory / "photoplan.json"
     if plan_path.is_file():
         print(f"既存の計画を使う: {plan_path}(写真を選び直すなら消して再実行)")
@@ -366,6 +376,39 @@ def cmd_apply(directory: Path, _args: argparse.Namespace) -> int:
     return 0
 
 
+#: 設定ファイルで補える項目。コマンドで指定が無いものだけ埋める(S6)。
+_CONFIGURABLE = tuple(SETTING_TYPES)
+
+
+def apply_config(args: argparse.Namespace, start: Path) -> argparse.Namespace:
+    """videoyard.json とプロファイルで、指定の無いオプションを埋める。
+
+    コマンドで打った値は常に勝つ(args の値が None のものだけ埋める)。
+    何を読んだかは必ず表示する(隠れた設定を作らない)。
+    """
+    cli = {key: getattr(args, key) for key in _CONFIGURABLE
+           if hasattr(args, key)}
+    settings, notes = resolve_settings(
+        cli, start, profile=getattr(args, "profile", None))
+    for note in notes:
+        print(note)
+    for key, value in settings.items():
+        if not hasattr(args, key):
+            continue
+        if key == "bgm" and isinstance(value, str):
+            value = Path(value)
+        setattr(args, key, value)
+    return args
+
+
+def fallbacks(args: argparse.Namespace, **defaults: object) -> argparse.Namespace:
+    """設定でも埋まらなかった項目に組み込みの既定を入れる。"""
+    for key, value in defaults.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    return args
+
+
 #: 区間一覧をそのまま全部出す上限。これを超えたら要約表示(U4)。
 _REPORT_MAX_ROWS = 12
 
@@ -394,6 +437,10 @@ def format_plan_report(plan, max_rows: int = _REPORT_MAX_ROWS) -> list[str]:
 
 
 def cmd_cut(directory: Path, args: argparse.Namespace) -> int:
+    args = fallbacks(apply_config(args, directory),
+                     vertical=False, fast=False, incremental=False,
+                     no_loudnorm=False, bgm_db=BGM_DEFAULT_GAIN_DB,
+                     transition="none")
     job = ProductionJob.load(directory)
     if args.incremental:
         if args.vertical:
@@ -511,11 +558,11 @@ def main(argv: list[str] | None = None) -> int:
 
     cut_cmd = sub.add_parser("cut", help="cutplan.json のとおりに切ってつなぐ")
     cut_cmd.add_argument("directory", type=Path)
-    cut_cmd.add_argument("--no-loudnorm", action="store_true",
+    cut_cmd.add_argument("--no-loudnorm", action="store_true", default=None,
                          help="音量の正規化(YouTube 基準 -14 LUFS)を行わない")
-    cut_cmd.add_argument("--vertical", action="store_true",
+    cut_cmd.add_argument("--vertical", action="store_true", default=None,
                          help="ショート用の縦動画(1080x1920、ぼかし背景+中央配置)で出力")
-    cut_cmd.add_argument("--fast", action="store_true",
+    cut_cmd.add_argument("--fast", action="store_true", default=None,
                          help="速さ優先(全コア+高速プリセット)。バイト単位の"
                               "再現性は保証されない")
     cut_cmd.add_argument("--bgm", type=Path, default=None,
@@ -523,11 +570,13 @@ def main(argv: list[str] | None = None) -> int:
                               "(短ければループ、末尾フェードアウト)")
     cut_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB,
                          help="BGM の音量(dB、既定 -16)")
-    cut_cmd.add_argument("--transition", choices=TRANSITIONS, default="none",
+    cut_cmd.add_argument("--transition", choices=TRANSITIONS, default=None,
                          help="場面転換: none=ハードカット(既定) / dip=短い暗転")
-    cut_cmd.add_argument("--incremental", action="store_true",
+    cut_cmd.add_argument("--incremental", action="store_true", default=None,
                          help="差分再エンコード: 変わっていない区間のエンコードを"
                               "再利用して再カットを速くする(--vertical とは併用不可)")
+    cut_cmd.add_argument("--profile", default=None,
+                           help="videoyard.json のプロファイル名")
     cut_cmd.set_defaults(handler=lambda a: cmd_cut(a.directory, a))
 
     intro_cmd = sub.add_parser("intro", help="ゲームの facts から紹介動画のタイムラインを作る")
@@ -542,13 +591,17 @@ def main(argv: list[str] | None = None) -> int:
         "auto", help="録画 1 本から 分析→カット→サムネ→説明文 まで一気通貫")
     auto_cmd.add_argument("directory", type=Path)
     auto_cmd.add_argument("--source", type=Path, required=True, help="元動画ファイル")
-    auto_cmd.add_argument("--shorts", action="store_true",
+    auto_cmd.add_argument("--shorts", action="store_true", default=None,
                           help="60 秒の縦ショートを一発生成(--target-seconds 60 + 縦出力)")
-    auto_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    auto_cmd.add_argument("--fast", action="store_true", default=None, help="速さ優先エンコード")
     auto_cmd.add_argument("--bgm", type=Path, default=None, help="手持ち BGM を重ねる")
-    auto_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
-    auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
-    auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
+    auto_cmd.add_argument("--bgm-db", type=float, default=None)
+    auto_cmd.add_argument("--target-seconds", type=float, default=None,
+                          help="この秒数に収める(--shorts なら既定 60)")
+    auto_cmd.add_argument("--hint", default=None, help="動画の内容ヒント")
+    auto_cmd.add_argument("--text", default=None, help="サムネに重ねるタイトル文字")
+    auto_cmd.add_argument("--profile", default=None,
+                           help="videoyard.json のプロファイル名")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
 
     batch_cmd = sub.add_parser(
@@ -557,13 +610,15 @@ def main(argv: list[str] | None = None) -> int:
                            help="production をまとめて作る親フォルダ")
     batch_cmd.add_argument("--sources", type=Path, required=True,
                            help="録画が入っているフォルダ")
-    batch_cmd.add_argument("--shorts", action="store_true",
+    batch_cmd.add_argument("--shorts", action="store_true", default=None,
                            help="60 秒・縦 9:16 で作る")
-    batch_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
-    batch_cmd.add_argument("--force", action="store_true",
+    batch_cmd.add_argument("--fast", action="store_true", default=None, help="速さ優先エンコード")
+    batch_cmd.add_argument("--force", action="store_true", default=None,
                            help="出来ている分も作り直す(既定は飛ばす)")
     batch_cmd.add_argument("--bgm", type=Path, default=None)
-    batch_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    batch_cmd.add_argument("--bgm-db", type=float, default=None)
+    batch_cmd.add_argument("--profile", default=None,
+                           help="videoyard.json のプロファイル名")
     batch_cmd.set_defaults(handler=lambda a: cmd_batch(a.directory, a))
 
     review_cmd = sub.add_parser(
@@ -600,14 +655,15 @@ def main(argv: list[str] | None = None) -> int:
     photo_cmd.add_argument("directory", type=Path)
     photo_cmd.add_argument("--photos", type=Path, default=None,
                            help="写真フォルダ(初回に必須。ファイル名順に並ぶ)")
-    photo_cmd.add_argument("--seconds", type=float,
-                           default=DEFAULT_SECONDS_PER_PHOTO,
+    photo_cmd.add_argument("--seconds", type=float, default=None,
                            help="1 枚あたりの秒数(既定 4)")
-    photo_cmd.add_argument("--vertical", action="store_true",
+    photo_cmd.add_argument("--vertical", action="store_true", default=None,
                            help="ショート用 9:16(1080x1920)")
-    photo_cmd.add_argument("--fast", action="store_true", help="速さ優先エンコード")
+    photo_cmd.add_argument("--fast", action="store_true", default=None, help="速さ優先エンコード")
     photo_cmd.add_argument("--bgm", type=Path, default=None, help="BGM を敷く")
-    photo_cmd.add_argument("--bgm-db", type=float, default=BGM_DEFAULT_GAIN_DB)
+    photo_cmd.add_argument("--bgm-db", type=float, default=None)
+    photo_cmd.add_argument("--profile", default=None,
+                           help="videoyard.json のプロファイル名")
     photo_cmd.set_defaults(handler=lambda a: cmd_photo(a.directory, a))
 
     meta_cmd = sub.add_parser("meta", help="チャプターと説明文の下書きを out/description.txt へ")

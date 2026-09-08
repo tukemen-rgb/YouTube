@@ -28,6 +28,31 @@
 - 生成物すべてに来歴(provenance)とライセンス記録を付ける
 - モデルなし・ネットワークなしで動くオフラインのテスト経路を最初から持つ
 
+## 毎回の指定を省く(v0.15: videoyard.json)
+
+`--shorts --fast --bgm ...` を毎回打たなくていい。作業フォルダに
+`videoyard.json` を置くと、`auto` / `cut` / `batch` / `photo` が読む。
+
+```json
+{
+  "defaults": { "fast": true, "bgm": "音楽/bgm.mp3" },
+  "profiles": {
+    "ショート": { "shorts": true, "bgm_db": -18 },
+    "配信切り抜き": { "transition": "dip", "mode": "static_and_silent" }
+  }
+}
+```
+
+```bash
+python -m videoyard auto productions/mygame --source 録画.mp4 --profile ショート
+```
+
+強さの順は **コマンドの指定 > プロファイル > defaults > 組み込みの既定**。
+打った値が黙って上書きされることはない。どのファイルを読んだかは毎回
+表示する。設定ファイルは production フォルダから上へ探し、無ければ
+`~/.videoyard/videoyard.json` を見る。知らない項目や型違いは
+候補を添えて断る(打ち間違いを黙って無視しない)。
+
 ## 最初にやること: 環境診断
 
 ```bash
