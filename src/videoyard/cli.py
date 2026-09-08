@@ -25,6 +25,7 @@ from videoyard.cut import (
     cut,
 )
 from videoyard.cutplan import CutPlan, CutPlanError
+from videoyard.export import DEFAULT_FPS, rounding_note, write_exports
 from videoyard.fonts import FontError
 from videoyard.incremental import cut_incremental
 from videoyard.intro import GameFacts, IntroError, build_timeline
@@ -194,6 +195,27 @@ def cmd_auto(directory: Path, args: argparse.Namespace) -> int:
           f"{directory / 'cutplan.sheet.txt'} の ○× を書き換えて "
           f"python -m videoyard apply {directory} && "
           f"python -m videoyard cut {directory}")
+    return 0
+
+
+def cmd_export(directory: Path, args: argparse.Namespace) -> int:
+    """カット計画を編集ソフトへ持ち出す(S1)。動画は作らない。"""
+    written = write_exports(directory, fps=args.fps, title=args.title)
+    plan = CutPlan.load(directory / "cutplan.json")
+    print(f"編集ソフト向けに書き出した({len(plan.renders)} 区間):")
+    for path in written:
+        print(f"  {path}")
+    note = rounding_note(plan, args.fps)
+    if note:
+        print(f"注: {note}")
+    print("\n読み込み方:")
+    print("  DaVinci Resolve … メディアプールに元動画を入れてから "
+          "ファイル > 読み込み > タイムライン で edit.edl または edit.fcpxml")
+    print("  Premiere Pro    … ファイル > 読み込み で edit.edl"
+          "(元動画のリンク先を聞かれたら指定する)")
+    print("  Final Cut Pro   … ファイル > 読み込む > XML で edit.fcpxml")
+    print(f"※ 元動画の fps が {args.fps} でないなら --fps で指定し直すこと"
+          "(編集点がずれる)")
     return 0
 
 
@@ -461,6 +483,16 @@ def main(argv: list[str] | None = None) -> int:
     auto_cmd.add_argument("--hint", default="", help="動画の内容ヒント")
     auto_cmd.add_argument("--text", default="", help="サムネに重ねるタイトル文字")
     auto_cmd.set_defaults(handler=lambda a: cmd_auto(a.directory, a))
+
+    export_cmd = sub.add_parser(
+        "export", help="カット計画を EDL / FCPXML で書き出す"
+                       "(Premiere / Resolve / Final Cut へ持ち出す)")
+    export_cmd.add_argument("directory", type=Path)
+    export_cmd.add_argument("--fps", type=int, default=DEFAULT_FPS,
+                            help=f"元動画のフレームレート(既定 {DEFAULT_FPS})")
+    export_cmd.add_argument("--title", default="videoyard",
+                            help="タイムライン名")
+    export_cmd.set_defaults(handler=lambda a: cmd_export(a.directory, a))
 
     shorts_cmd = sub.add_parser(
         "shorts", help="盛り上がり上位からショート候補を複数本(縦 9:16)")

@@ -48,3 +48,39 @@
 - https://digital-gorilla.co.jp/ai-lab/douga-jidou-henshu-ai/
 - https://www.kirari.io/blog/ai-clip-tools
 - https://www.capcut.com/ja-jp/resource/ai-gaming-video-editor
+
+
+---
+
+# サービス面の競合調査(2026-09-08、社長指示による追加調査)
+
+「同業他社と比較して弱点を調べて克服」の指示で、機能ではなく**サービス面**
+(使い始めから仕上げまでの体験)を調べ直した。
+
+## 見つかった弱点(サービス面)
+
+| # | 弱点 | 競合の状況 | 深刻度 |
+| --- | --- | --- | --- |
+| S1 | **他ソフトへ持ち出せない**(mp4 しか出ない) | auto-editor / AutoCut / Descript / Eddie AI は EDL・FCPXML・XML でタイムラインごと Premiere / Resolve / FCP へ渡せる。プロの本流は「AI で粗く切って仕上げは自分のソフト」 | **最大** |
+| S2 | 導入のハードル(Python + ffmpeg + CLI) | 初心者向けは「インストール不要」が主流(Clipchamp / Canva / CapCut)。最低限、環境の不備を自分で診断して直し方を言えるべき | 大 |
+| S3 | 複数動画をまとめて処理できない | 実況者は週に何本も録る。1 本ずつ手で回すのは現実的でない | 中 |
+| S4 | 出来上がりを確認する手段が mp4 を再生するだけ | 競合はプレビュー画面を持つ。うちはグラフと計画で説明できるが、一覧性が無い | 中 |
+
+## 逆に、うちが競合より強い点(調査で確認)
+
+- OpusClip はクリップ 20 個中使えるのが 2〜3 個、スコアの信頼性に難あり、
+  **日本語字幕に非対応**。うちは判定根拠を全部計画に残し、精度の床を
+  テストで守っている(既定 85% / and モード 100%)
+- クラウド勢は録画を外部にアップロードする前提。うちはローカル完結
+- Vrew は字幕が強い(D1 の判断材料。実装は社長判断待ち)
+
+## 出典(サービス面の追加調査)
+
+- https://knightli.com/en/2026/04/23/auto-editor-auto-cut-silence-premiere-resolve-workflow/
+- https://www.autocut.com/en/ / https://www.cined.com/autocut-plugin-now-integrates-ai-directly-into-premiere-pro-to-automatically-handle-time-consuming-tasks/
+- https://help.heyeddie.ai/en/articles/10328445-one-click-export-of-your-edit-to-resolve-adobe-and-fcp
+- https://help.descript.com/hc/en-us/articles/10255813481613-Timeline-exports
+- https://cutconvert.com/guides/edl-vs-xml-vs-aaf / https://scriptcut.io/blog/what-is-fcpxml
+- https://bigvu.tv/blog/ja/opus-clips%E3%81%A8%E3%81%AF-...(OpusClip 日本語字幕非対応・当たり外れ)
+- https://note.com/aidynote/n/nae817c3cfd83(Opus Clip vs Vrew vs CapCut)
+- https://www.itreview.jp/products/vrew/reviews

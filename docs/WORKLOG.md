@@ -169,3 +169,10 @@
 - C21 対応: shorts コマンド(盛り上がり上位から縦クリップ候補を N 本)。
   子 production 方式で計画・来歴・job を候補ごとに保持。テスト 215 件、
   ruff クリーン。
+
+## サイクル 25(2026-09-08)
+
+- 社長指示によるサービス面の競合再調査 → docs/MARKET_RESEARCH.md に S1〜S4 を追記。
+- S1 対応(最大の弱点): export コマンドで EDL(CMX3600)/ FCPXML 1.9 を書き出し、
+  Premiere / DaVinci Resolve / Final Cut へタイムラインごと持ち出せるように。
+  倍速区間は M2 / timeMap で表現。テスト 234 件、ruff クリーン。
