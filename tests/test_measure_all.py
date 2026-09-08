@@ -12,7 +12,11 @@ import time
 import unittest
 from pathlib import Path
 
-from videoyard.analyze import AnalyzeParams, detection_filters
+from videoyard.analyze import (
+    AnalyzeParams,
+    detection_filters,
+    measure_progress_line,
+)
 from videoyard.excitement import (
     bucketize,
     measure_all,
@@ -59,6 +63,31 @@ class FilterSpec(unittest.TestCase):
     def test_no_audio_means_no_silence_filter(self):
         _video, audio = detection_filters(AnalyzeParams(), has_audio=False)
         self.assertEqual(audio, "")
+
+
+class ProgressLine(unittest.TestCase):
+    """進み具合の表示(S9)— 1 パスにした代償の「長い無言」を埋める。"""
+
+    def test_percentage_and_remaining_seconds(self):
+        # 10 秒で 50% なら、残りも約 10 秒
+        line = measure_progress_line(0.5, 10.0)
+        self.assertIn("50%", line)
+        self.assertIn("残り約 10 秒", line)
+
+    def test_long_remaining_shown_in_minutes(self):
+        # 60 秒で 10% なら残り 9 分。秒で言われても分からない
+        line = measure_progress_line(0.1, 60.0)
+        self.assertIn("分", line)
+        self.assertIn("9", line)
+
+    def test_no_estimate_until_there_is_evidence(self):
+        # 始まった直後にでたらめな残り時間を出さない
+        self.assertNotIn("残り", measure_progress_line(0.0, 0.0))
+        self.assertNotIn("残り", measure_progress_line(0.01, 0.2))
+
+    def test_percentage_is_clamped(self):
+        self.assertIn("100%", measure_progress_line(1.5, 10.0))
+        self.assertIn("0%", measure_progress_line(-0.2, 10.0))
 
 
 @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg が無い環境ではスキップ")
@@ -128,6 +157,34 @@ class SamePassSameAnswer(unittest.TestCase):
         old_gap = sum(old[half + 1:]) / len(old[half + 1:])
         new_gap = sum(new[half + 1:]) / len(new[half + 1:])
         self.assertGreater(new_gap, old_gap)
+
+    def test_progress_is_reported_while_measuring(self):
+        seen: list[float] = []
+        video, audio = detection_filters(AnalyzeParams(), has_audio=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            measure_all(self.source, detect_video=video, detect_audio=audio,
+                        has_audio=True, out_dir=Path(tmp), duration=6.0,
+                        progress=seen.append)
+        self.assertTrue(seen, "進み具合が 1 度も報告されていない")
+        self.assertTrue(all(0.0 <= r <= 1.5 for r in seen), seen)
+        self.assertGreater(max(seen), 0.5, "最後まで進んだ報告が無い")
+
+    def test_results_are_the_same_with_progress_enabled(self):
+        # 進捗を読む経路(Popen)と読まない経路(run)で答えが変わらないこと
+        video, audio = detection_filters(AnalyzeParams(), has_audio=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            quiet = measure_all(self.source, detect_video=video,
+                                detect_audio=audio, has_audio=True,
+                                out_dir=Path(tmp) )
+        with tempfile.TemporaryDirectory() as tmp:
+            noisy = measure_all(self.source, detect_video=video,
+                                detect_audio=audio, has_audio=True,
+                                out_dir=Path(tmp), duration=6.0,
+                                progress=lambda _r: None)
+        self.assertEqual(quiet[1], noisy[1])   # 動き
+        self.assertEqual(quiet[2], noisy[2])   # 音量
+        for key in ("freeze_start", "silence_start"):
+            self.assertEqual(key in quiet[0], key in noisy[0])
 
     def test_detection_events_are_reported(self):
         video, audio = detection_filters(AnalyzeParams(), has_audio=True)

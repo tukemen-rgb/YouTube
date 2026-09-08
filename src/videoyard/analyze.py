@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,6 +121,25 @@ def run_detection(source: Path, params: AnalyzeParams, has_audio: bool,
     return result.stderr
 
 
+#: 進み具合を知らせる間隔(秒)。細かすぎると画面が流れて読めない。
+PROGRESS_INTERVAL_SECONDS = 5.0
+
+
+def measure_progress_line(ratio: float, elapsed: float) -> str:
+    """進み具合の 1 行。残り時間はここまでの実績から見積もる。純粋関数。
+
+    「45%(残り約 20 秒)」のように出す。見積もりが立たないうちは
+    割合だけ言う(でたらめな残り時間を出さない)。
+    """
+    percent = max(0, min(100, int(ratio * 100)))
+    if ratio <= 0.02 or elapsed < 1.0:
+        return f"測定中… {percent}%"
+    remaining = elapsed / ratio - elapsed
+    if remaining >= 90:
+        return f"測定中… {percent}%(残り約 {remaining / 60:.0f} 分)"
+    return f"測定中… {percent}%(残り約 {remaining:.0f} 秒)"
+
+
 def detection_filters(params: AnalyzeParams, has_audio: bool) -> tuple[str, str]:
     """検出に使うフィルタ指定 (映像, 音声)。純粋関数。"""
     video = f"freezedetect=n={params.still_noise}:d={params.min_still}"
@@ -145,11 +165,11 @@ def _parse_pairs(stderr: str, start_re: re.Pattern[str], end_re: re.Pattern[str]
             events.append((float(m.group(1)), "end"))
     intervals: list[Interval] = []
     open_at: float | None = None
-    for time, kind in events:
+    for at, kind in events:
         if kind == "start" and open_at is None:
-            open_at = time
+            open_at = at
         elif kind == "end" and open_at is not None:
-            intervals.append((open_at, min(time, duration)))
+            intervals.append((open_at, min(at, duration)))
             open_at = None
     if open_at is not None:
         intervals.append((open_at, duration))
@@ -542,10 +562,23 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     # 動画のデコードが分析でいちばん重いので、回数を減らすのが効く。
     report("静止・無音の検出と、動き・音量の測定中(1 パス)…")
     detect_video, detect_audio = detection_filters(params, has_audio)
+    started = time.monotonic()
+    last_report = [0.0]
+
+    def on_progress(ratio: float) -> None:
+        # 長い動画では 10 分以上の無言になるので、一定間隔で知らせる。
+        now = time.monotonic()
+        if progress is None or now - last_report[0] < PROGRESS_INTERVAL_SECONDS:
+            return
+        last_report[0] = now
+        report(measure_progress_line(ratio, now - started))
+
     with tempfile.TemporaryDirectory(prefix="videoyard-measure-") as tmp:
         stderr, raw_motion, raw_loudness = measure_all(
             source, detect_video=detect_video, detect_audio=detect_audio,
-            has_audio=has_audio, out_dir=Path(tmp), ffmpeg=ffmpeg)
+            has_audio=has_audio, out_dir=Path(tmp), duration=duration,
+            progress=on_progress if progress is not None else None,
+            ffmpeg=ffmpeg)
     motion = bucketize(raw_motion, duration)
     loudness = bucketize(raw_loudness, duration) if has_audio else None
 

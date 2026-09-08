@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,13 +92,19 @@ MOTION_SAMPLE_FPS = 10
 
 def measure_all(source: Path, detect_video: str = "", detect_audio: str = "",
                 has_audio: bool = True, out_dir: Path | None = None,
+                duration: float = 0.0,
+                progress: Callable[[float], None] | None = None,
                 ffmpeg: str = "ffmpeg") -> tuple[str, list[tuple[float, float]],
                                                  list[tuple[float, float]]]:
     """動き・音量・検出フィルタを **1 パス**でまとめて測る(S8)。
 
     従来は 3 回に分けて ffmpeg を起動していた(検出 / 動き / 音量)。
     動画のデコードは分析でいちばん重い処理なので、3 回が 1 回になれば
-    そのぶん速くなる。10 分の動画で実測 74 秒 → 38 秒(1.9 倍)。
+    そのぶん速くなる。10 分の動画で実測 74 秒 → 41 秒(1.8 倍)。
+
+    1 パスにした代わりに「長い無言時間」ができるので(3 時間の配信なら
+    12 分)、ffmpeg の -progress を読んで進み具合を報告する(S9)。
+    duration を渡すと割合と残り時間を出せる。
 
     返すのは (検出パスの stderr, 動きの列, 音量の列)。metadata の出力は
     映像と音声で別々のファイルに書く。同じ標準出力へ混ぜると、どちらの
@@ -134,14 +141,17 @@ def measure_all(source: Path, detect_video: str = "", detect_audio: str = "",
         )
         maps += ["-map", "[aout]"]
 
-    result = subprocess.run(
-        [ffmpeg, "-hide_banner", "-nostdin", "-i", str(source),
-         "-filter_complex", ";".join(chains), *maps, "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise ExcitementError(f"測定パスが失敗: {result.stderr[-300:]}")
+    args = [ffmpeg, "-hide_banner", "-nostdin", "-i", str(source),
+            "-filter_complex", ";".join(chains), *maps]
+    if progress is not None:
+        # -progress は「今どこまで処理したか」を機械可読で書き出す。
+        # metadata はファイルへ出すので標準出力は空いている。
+        args += ["-progress", "pipe:1", "-nostats"]
+    args += ["-f", "null", "-"]
 
+    stderr_text = _run_with_progress(args, duration, progress)
+
+    _ = stderr_text
     motion = parse_metadata_series(
         motion_path.read_text(encoding="utf-8", errors="replace")
         if motion_path.is_file() else "", "lavfi.signalstats.YDIF")
@@ -150,7 +160,40 @@ def measure_all(source: Path, detect_video: str = "", detect_audio: str = "",
         loudness = parse_metadata_series(
             loudness_path.read_text(encoding="utf-8", errors="replace"),
             "lavfi.astats.Overall.RMS_level")
-    return result.stderr, motion, loudness
+    return stderr_text, motion, loudness
+
+
+#: -progress の出力から進み具合を読む鍵(マイクロ秒)。
+_OUT_TIME = re.compile(r"^out_time_us=(\d+)", re.MULTILINE)
+
+
+def _run_with_progress(args: list[str], duration: float,
+                       progress: Callable[[float], None] | None) -> str:
+    """ffmpeg を走らせ、-progress を読みながら進み具合を知らせる。
+
+    stderr は一時ファイルへ受ける。パイプ 2 本を同時に読まないと
+    詰まって止まるため(バッファがいっぱいになると ffmpeg が待つ)。
+    """
+    if progress is None:
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ExcitementError(f"測定パスが失敗: {result.stderr[-300:]}")
+        return result.stderr
+
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8",
+                                errors="replace") as err:
+        with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err,
+                              text=True, bufsize=1) as proc:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if m := _OUT_TIME.match(line):
+                    seconds = int(m.group(1)) / 1_000_000
+                    progress(seconds / duration if duration > 0 else 0.0)
+        err.seek(0)
+        stderr_text = err.read()
+    if proc.returncode != 0:
+        raise ExcitementError(f"測定パスが失敗: {stderr_text[-300:]}")
+    return stderr_text
 
 
 _PTS_TIME = re.compile(r"pts_time:([0-9.]+)")
