@@ -161,6 +161,7 @@ python -m videoyard cut productions/mygame
 #    --fast       速さ優先(2.6 倍速目安。バイト単位の再現性は非保証)
 #    --bgm 曲.mp3 手持ち BGM をゲーム音の下に(--bgm-db で音量、既定 -16)
 #    --transition dip  つなぎ目に短い暗転(既定はハードカット)
+#    --telop-style stroke  テロップの見せ方(band/stroke/shadow/plain)
 #    --denoise light   声を聞き取りやすくする(空調・PCファンの音を減らす)
 #                      実測: ノイズだけの音は 24dB 減り、声はほぼそのまま
 
@@ -182,6 +183,9 @@ python -m videoyard meta productions/mygame   # → out/description.txt
 - analyze は結果が極端なとき(切りすぎ・何も切れない・細切れ)にも
   回すべきノブを提案する。診断は助言で、決めるのは人
 
+- 長い録画でも止まらない: 出力が長いときは区間ごとに書き出して結合する
+  経路へ自動で切り替わる(1 時間の録画 → 5 分のダイジェストが 1 分 10 秒。
+  以前はメモリ不足で作れなかった)
 - 分析の速さ(実測): 10 分の動画で 41 秒、3 時間の配信で約 12 分。
   検出と測定を 1 パスにまとめてある(ローカルの CPU だけで動く)
 - 各 keep 区間に**盛り上がり度 0〜100** が付く(v0.4)。動きの激しさ

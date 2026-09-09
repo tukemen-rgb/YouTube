@@ -67,6 +67,37 @@ BGM_FADE_OUT_SECONDS = 1.5
 TRANSITIONS = ("none", "dip")
 VIDEO_FADE_SECONDS = 0.15
 
+#: テロップの見せ方(S10)。黒帯+白文字の 1 種類しか無く、競合が持つ
+#: 「動画の雰囲気に合わせる」余地が無かった。文字の意味は変えず、
+#: 見え方だけを選べるようにする。既定は band(従来と同じ)。
+#:
+#: * band   … 半透明の黒帯に白文字(可読性がいちばん高い。既定)
+#: * stroke … 帯なし・太い縁取り(絵を隠さない。ゲーム画面向き)
+#: * shadow … 帯なし・落ち影(やわらかい印象。写真向き)
+#: * plain  … 装飾なし(すでに読みやすい素材や、後から編集ソフトで
+#:            仕上げるとき)
+TELOP_STYLES = ("band", "stroke", "shadow", "plain")
+
+
+def telop_decoration(style: str, font_size: int) -> str:
+    """テロップの装飾部分だけを組み立てる。純粋関数。
+
+    文字そのもの(fontfile / textfile / expansion=none)は共通で、
+    ここで足すのは見え方だけ。安全経路は様式によらず同じ。
+    """
+    if style not in TELOP_STYLES:
+        raise CutError(f"telop_style は {TELOP_STYLES} のどれか: {style}")
+    if style == "band":
+        return (":box=1:boxcolor=0x000000@0.5"
+                f":boxborderw={max(6, font_size // 4)}")
+    if style == "stroke":
+        return f":borderw={max(2, font_size // 12)}:bordercolor=0x000000"
+    if style == "shadow":
+        offset = max(2, font_size // 16)
+        return (f":shadowcolor=0x000000@0.8:shadowx={offset}:shadowy={offset}")
+    return ""
+
+
 #: 声を聞き取りやすくする処理(S7)。エアコンの唸り・PC ファン・
 #: マイクのサーというノイズを減らす。**音を作り変える処理なので既定は
 #: off**。掛けたかどうかは来歴 manifest に必ず残す。
@@ -122,7 +153,7 @@ def write_telop_files(plan: CutPlan, text_dir: Path,
 
 
 def _drawtext(seg: PlanSegment, plan: CutPlan, font_path: Path, text_path: Path,
-              vertical: bool = False) -> str:
+              vertical: bool = False, telop_style: str = "band") -> str:
     font_size = telop_font_size(plan, vertical=vertical)
     margin = max(20, font_size // 2)
     if vertical and seg.telop_pos != "top":
@@ -137,9 +168,8 @@ def _drawtext(seg: PlanSegment, plan: CutPlan, font_path: Path, text_path: Path,
         f":fontcolor={color}"
         f":fontsize={font_size}"
         f":line_spacing={font_size // 4}"
-        ":box=1:boxcolor=0x000000@0.5"
-        f":boxborderw={max(6, font_size // 4)}"
-        f":x=(w-text_w)/2:y={y}"
+        + telop_decoration(telop_style, font_size)
+        + f":x=(w-text_w)/2:y={y}"
     )
 
 
@@ -156,6 +186,7 @@ def build_command(
     bgm_gain_db: float = -16.0,
     transition: str = "none",
     denoise: str = "none",
+    telop_style: str = "band",
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
     """cutplan から ffmpeg の引数列を組み立てる。純粋関数。"""
@@ -180,7 +211,7 @@ def build_command(
             chain += f",setpts=PTS/{SPEED_FACTOR:g}"
         if index in telop_paths:
             chain += "," + _drawtext(seg, plan, font_path, telop_paths[index],
-                                     vertical=vertical)
+                                     vertical=vertical, telop_style=telop_style)
         # 出力動画上でのこの区間の長さ(speed は縮む)。フェードの基準。
         seg_duration = seg.end - seg.start
         if seg.action == "speed":
@@ -299,10 +330,24 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         vertical: bool = False, fast: bool = False,
         bgm: Path | None = None, bgm_gain_db: float = BGM_DEFAULT_GAIN_DB,
         transition: str = "none", denoise: str = "none",
+        telop_style: str = "band", progress=None,
         ffmpeg: str = "ffmpeg") -> dict[str, object]:
-    """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。"""
+    """production ディレクトリの cutplan.json を実行して out/video.mp4 を作る。
+
+    出力が長いと 1 本のフィルタでは生フレームがメモリに載りきらない
+    (実測: 5 分の出力で 12GB 相当、16GB の機械が落ちた)。その場合は
+    自動で「分けて書き出して結合する」経路に切り替える(S11)。
+    """
     plan_path = production_dir / "cutplan.json"
     plan = CutPlan.load(plan_path)
+    from videoyard.chunked import needs_chunking
+    if needs_chunking(plan):
+        from videoyard.chunked import cut_chunked
+        return cut_chunked(
+            production_dir, normalize_loudness=normalize_loudness,
+            vertical=vertical, fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db,
+            transition=transition, denoise=denoise, telop_style=telop_style,
+            progress=progress, ffmpeg=ffmpeg)
     source = Path(plan.source_path)
     if not source.is_absolute():
         source = production_dir / source
@@ -327,7 +372,8 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
     args = build_command(plan, source, font_path, telop_paths, tmp_path,
                          normalize_loudness=normalize_loudness, vertical=vertical,
                          fast=fast, bgm=bgm, bgm_gain_db=bgm_gain_db,
-                         transition=transition, denoise=denoise, ffmpeg=ffmpeg)
+                         transition=transition, denoise=denoise,
+                         telop_style=telop_style, ffmpeg=ffmpeg)
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0 or not tmp_path.is_file() or tmp_path.stat().st_size == 0:
         tmp_path.unlink(missing_ok=True)
@@ -357,6 +403,7 @@ def cut(production_dir: Path, normalize_loudness: bool = True,
         "bgm_gain_db": bgm_gain_db if bgm is not None else None,
         "transition": transition,
         "denoise": denoise,
+        "telop_style": telop_style,
         "command": args,
     }
     tmp_path.replace(final_path)

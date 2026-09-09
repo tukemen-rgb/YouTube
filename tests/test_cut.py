@@ -114,6 +114,61 @@ class TelopStyle(unittest.TestCase):
             PlanSegment(start=0.0, end=1.0, action="keep", telop_color="red")
 
 
+class TelopStylePresets(unittest.TestCase):
+    """テロップの見せ方(S10)— 文字の安全経路は様式によらず同じ。"""
+
+    def test_all_styles_build(self):
+        from videoyard.cut import TELOP_STYLES, telop_decoration
+        for style in TELOP_STYLES:
+            telop_decoration(style, 48)  # 例外が出ないこと
+
+    def test_band_is_the_default_look(self):
+        from videoyard.cut import telop_decoration
+        self.assertIn("box=1", telop_decoration("band", 48))
+
+    def test_stroke_has_no_band(self):
+        from videoyard.cut import telop_decoration
+        style = telop_decoration("stroke", 48)
+        self.assertIn("borderw", style)
+        self.assertNotIn("box=1", style)
+
+    def test_shadow_has_offset(self):
+        from videoyard.cut import telop_decoration
+        style = telop_decoration("shadow", 48)
+        self.assertIn("shadowx", style)
+        self.assertNotIn("box=1", style)
+
+    def test_plain_has_no_decoration(self):
+        from videoyard.cut import telop_decoration
+        self.assertEqual(telop_decoration("plain", 48), "")
+
+    def test_unknown_style_rejected(self):
+        from videoyard.cut import telop_decoration
+        with self.assertRaises(CutError) as ctx:
+            telop_decoration("ネオン", 48)
+        self.assertIn("band", str(ctx.exception))
+
+    def test_decoration_scales_with_font_size(self):
+        from videoyard.cut import telop_decoration
+        small = telop_decoration("stroke", 24)
+        large = telop_decoration("stroke", 96)
+        self.assertNotEqual(small, large)
+
+    def test_safe_text_path_is_kept_in_every_style(self):
+        from videoyard.cut import TELOP_STYLES
+        plan = _plan(segments=(
+            PlanSegment(start=0.0, end=5.0, action="keep", telop="テスト"),
+        ))
+        with tempfile.TemporaryDirectory() as tmp:
+            telops = write_telop_files(plan, Path(tmp))
+            for style in TELOP_STYLES:
+                args = build_command(plan, Path("/s.mp4"), Path("/f.ttf"),
+                                     telops, Path("/o.mp4"), telop_style=style)
+                filter_arg = args[args.index("-filter_complex") + 1]
+                self.assertIn("textfile=", filter_arg)
+                self.assertIn("expansion=none", filter_arg)
+
+
 class CommandBuilding(unittest.TestCase):
     def test_deterministic(self):
         plan = _plan()
