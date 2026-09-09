@@ -6,7 +6,7 @@
 
 案(cutplan.proposed.json)と実行された計画(cutplan.json)の差分が、
 「AI はこう思ったが、人はこう直した」というラベル付きデータになる。
-窓ごとの測定値(動き・音量・立ち上がり)を入力、人が最終的に残したか
+窓ごとの測定値(動き・音量・立ち上がり・発話らしさ)を入力、人が残したか
 どうかを正解として、ロジスティック回帰(依存ゼロの純 Python 実装)で
 採点の重みを学習し直す。
 
@@ -34,7 +34,7 @@ from pathlib import Path
 from videoyard.cutplan import CutPlan
 from videoyard.excitement import ScoreWeights
 
-#: これ未満の添削例では学習しない。3 係数のロジスティック回帰でも、
+#: これ未満の添削例では学習しない。4 係数のロジスティック回帰でも、
 #: これを下回ると個々の例の偶然を拾いすぎる。
 MIN_EXAMPLES = 30
 
@@ -60,11 +60,12 @@ class Example:
     motion: float
     loudness: float
     onset: float
+    speech: float
     kept: bool
 
     def to_dict(self) -> dict[str, object]:
         return {"motion": self.motion, "loudness": self.loudness,
-                "onset": self.onset, "kept": self.kept}
+                "onset": self.onset, "speech": self.speech, "kept": self.kept}
 
 
 def _action_at(plan: CutPlan, time: float) -> str | None:
@@ -92,6 +93,8 @@ def extract_examples(proposal: CutPlan, final: CutPlan,
     motion = features["motion"]
     loudness = features.get("loudness") or [0.0] * len(motion)
     onset = features.get("onset") or [0.0] * len(motion)
+    # speech は v0.22 より前の analysis_windows.json には無い。無ければ 0。
+    speech = features.get("speech") or [0.0] * len(motion)
 
     examples = []
     for i, m in enumerate(motion):
@@ -104,7 +107,7 @@ def extract_examples(proposal: CutPlan, final: CutPlan,
             continue
         examples.append(Example(
             motion=float(m), loudness=float(loudness[i]), onset=float(onset[i]),
-            kept=(decided == "keep"),
+            speech=float(speech[i]), kept=(decided == "keep"),
         ))
     return examples
 
@@ -161,7 +164,10 @@ def load_examples(directory: Path | None = None) -> list[Example]:
         data = json.loads(line)
         examples.append(Example(
             motion=float(data["motion"]), loudness=float(data["loudness"]),
-            onset=float(data["onset"]), kept=bool(data["kept"]),
+            onset=float(data["onset"]),
+            # 古い記録には speech が無い。0 = 「発話らしさは判断材料に
+            # しなかった」として、そのまま学習に混ぜられる。
+            speech=float(data.get("speech", 0.0)), kept=bool(data["kept"]),
         ))
     return examples
 
@@ -188,29 +194,31 @@ def train(examples: list[Example], epochs: int = 300, learning_rate: float = 0.1
             f"添削の例が {len(examples)} 件で、学習に必要な {MIN_EXAMPLES} 件に"
             "届かない。analyze → 計画を直す → cut を繰り返すと貯まる。"
         )
-    w = [0.0, 0.0, 0.0]  # motion, loudness, onset
+    k = 4  # motion, loudness, onset, speech
+    w = [0.0] * k
     b = 0.0
     n = len(examples)
     for _ in range(epochs):
-        gw = [0.0, 0.0, 0.0]
+        gw = [0.0] * k
         gb = 0.0
         for ex in examples:
-            x = (ex.motion, ex.loudness, ex.onset)
+            x = (ex.motion, ex.loudness, ex.onset, ex.speech)
             p = _sigmoid(sum(wi * xi for wi, xi in zip(w, x, strict=True)) + b)
             error = p - (1.0 if ex.kept else 0.0)
-            for j in range(3):
+            for j in range(k):
                 gw[j] += error * x[j]
             gb += error
-        for j in range(3):
+        for j in range(k):
             w[j] -= learning_rate * (gw[j] / n + l2 * w[j])
         b -= learning_rate * gb / n
 
     correct = 0
     for ex in examples:
-        p = _sigmoid(w[0] * ex.motion + w[1] * ex.loudness + w[2] * ex.onset + b)
+        p = _sigmoid(w[0] * ex.motion + w[1] * ex.loudness
+                     + w[2] * ex.onset + w[3] * ex.speech + b)
         if (p >= 0.5) == ex.kept:
             correct += 1
-    weights = ScoreWeights(motion=w[0], loudness=w[1], onset=w[2])
+    weights = ScoreWeights(motion=w[0], loudness=w[1], onset=w[2], speech=w[3])
     return weights, correct / n
 
 
@@ -225,7 +233,7 @@ def save_weights(weights: ScoreWeights, examples: int, accuracy: float,
         "examples": examples,
         "training_accuracy": round(accuracy, 4),
         "weights": {"motion": weights.motion, "loudness": weights.loudness,
-                    "onset": weights.onset},
+                    "onset": weights.onset, "speech": weights.speech},
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -245,7 +253,10 @@ def load_weights(directory: Path | None = None) -> tuple[ScoreWeights, dict[str,
         raw = data["weights"]
         weights = ScoreWeights(motion=float(raw["motion"]),
                                loudness=float(raw["loudness"]),
-                               onset=float(raw["onset"]))
+                               onset=float(raw["onset"]),
+                               # v0.22 より前に学習した weights.json には
+                               # speech が無い。0 = 使わない、で読める。
+                               speech=float(raw.get("speech", 0.0)))
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise LearningError(f"weights.json が読めない({path}): {exc}。"
                             "消せば既定の重みに戻る。") from exc

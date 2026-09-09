@@ -78,7 +78,7 @@ class Training(unittest.TestCase):
         for i in range(n):
             motion = 1.0 if i % 2 == 0 else -1.0
             out.append(Example(motion=motion, loudness=0.0, onset=0.0,
-                               kept=(motion > 0)))
+                               speech=0.0, kept=(motion > 0)))
         return out
 
     def test_learns_positive_motion_weight(self):
@@ -133,7 +133,7 @@ class Storage(unittest.TestCase):
         self.assertEqual(record_feedback(self.prod, self.data_dir), 0)
 
     def test_weights_round_trip(self):
-        weights = ScoreWeights(motion=1.2, loudness=-0.3, onset=0.4)
+        weights = ScoreWeights(motion=1.2, loudness=-0.3, onset=0.4, speech=0.5)
         save_weights(weights, examples=42, accuracy=0.9, directory=self.data_dir)
         loaded = load_weights(self.data_dir)
         assert loaded is not None

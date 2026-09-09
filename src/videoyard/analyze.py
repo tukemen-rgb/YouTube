@@ -38,6 +38,7 @@ from videoyard.excitement import (
     combine_features,
     measure_all,
     range_score,
+    speechiness,
     window_features,
 )
 from videoyard.graph import excitement_svg
@@ -625,13 +626,15 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
         report(measure_progress_line(ratio, now - started))
 
     with tempfile.TemporaryDirectory(prefix="videoyard-measure-") as tmp:
-        stderr, raw_motion, raw_loudness = measure_all(
+        stderr, raw_motion, raw_loudness, raw_speech = measure_all(
             source, detect_video=detect_video, detect_audio=detect_audio,
             has_audio=has_audio, out_dir=Path(tmp), duration=duration,
             progress=on_progress if progress is not None else None,
             ffmpeg=ffmpeg)
     motion = bucketize(raw_motion, duration)
     loudness = bucketize(raw_loudness, duration) if has_audio else None
+    # 発話らしさは平均を取る前の細かい列からしか作れない(excitement.py)。
+    speech = speechiness(raw_speech, duration) if has_audio else None
 
     # 静止 = freezedetect(完全一致に近い)+ 動き量による「ほぼ静止」の補完
     static = parse_freeze(stderr, duration) + low_motion_intervals(
@@ -643,7 +646,7 @@ def analyze(production_dir: Path, source: Path, params: AnalyzeParams,
     # 盛り上がり度: 測定済みの特徴量から窓ごとの点数を作り、keep 区間へ
     # 注釈する。重みは学習済みのものが渡されればそれを、無ければ既定。
     report("盛り上がり度を採点中…")
-    features = window_features(motion, loudness)
+    features = window_features(motion, loudness, speech)
     scores = combine_features(features, weights or ScoreWeights())
     if params.target_seconds is not None:
         segments = trim_to_target(

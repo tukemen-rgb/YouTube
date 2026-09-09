@@ -522,7 +522,7 @@ def cmd_learn(_args: argparse.Namespace) -> int:
     print(f"学習完了: {len(examples)} 件の添削 → {path}")
     print(f"訓練データ上の的中率: {accuracy:.0%}")
     print(f"新しい重み: 動き={weights.motion:+.2f} 音量={weights.loudness:+.2f} "
-          f"立ち上がり={weights.onset:+.2f}")
+          f"立ち上がり={weights.onset:+.2f} 発話らしさ={weights.speech:+.2f}")
     print("次回の analyze から自動で使われる。weights.json を消せば既定に戻る。")
     return 0
 

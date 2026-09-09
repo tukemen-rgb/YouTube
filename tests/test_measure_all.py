@@ -22,6 +22,7 @@ from videoyard.excitement import (
     measure_all,
     measure_loudness,
     measure_motion,
+    parse_metadata_series,
 )
 
 _HAS_FFMPEG = shutil.which("ffmpeg") is not None
@@ -111,11 +112,26 @@ class SamePassSameAnswer(unittest.TestCase):
     def test_loudness_matches_the_separate_pass_exactly(self):
         # 音量の測り方は変えていないので、値も完全に一致すること
         old = bucketize(measure_loudness(self.source), 6.0)
-        _stderr, _motion, loudness = self._measure()
+        _stderr, _motion, loudness, _speech = self._measure()
         new = bucketize(loudness, 6.0)
         self.assertEqual(len(new), len(old))
         for i, (a, b) in enumerate(zip(new, old, strict=True)):
             self.assertAlmostEqual(a, b, places=3, msg=f"音量が窓 {i} で違う")
+
+    def test_narrowed_astats_matches_the_default_astats(self):
+        """astats を「全体の RMS だけ」に絞っても値が変わらないこと。
+
+        絞ったのは速さと一時ファイルの大きさのため(5 分で 27 MB → 1 MB、
+        3.8 秒 → 1.4 秒)。**値が 1 つでも変われば、過去の分析結果と
+        つながらなくなる。** ffmpeg 側の仕様が変わったらここで気づく。
+        """
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostdin", "-i", str(self.source), "-vn",
+             "-af", "astats=metadata=1:reset=1,ametadata=print:file=-",
+             "-f", "null", "-"], capture_output=True, text=True, check=True)
+        default = parse_metadata_series(result.stdout,
+                                        "lavfi.astats.Overall.RMS_level")
+        self.assertEqual(measure_loudness(self.source), default)
 
     def test_motion_still_separates_still_from_moving(self):
         """動きは測る頻度を落としたので値は一致しない。区別は保つこと。
@@ -124,7 +140,7 @@ class SamePassSameAnswer(unittest.TestCase):
         大小関係が保たれていれば、切る判断も採点も従来どおり働く。
         """
         old = bucketize(measure_motion(self.source), 6.0)
-        _stderr, motion, _loudness = self._measure()
+        _stderr, motion, _loudness, _speech = self._measure()
         new = bucketize(motion, 6.0)
         self.assertEqual(len(new), len(old))
 
@@ -151,7 +167,7 @@ class SamePassSameAnswer(unittest.TestCase):
         判定が甘くなっていないことの確認。
         """
         old = bucketize(measure_motion(self.source), 6.0)
-        _stderr, motion, _loudness = self._measure()
+        _stderr, motion, _loudness, _speech = self._measure()
         new = bucketize(motion, 6.0)
         half = len(new) // 2
         old_gap = sum(old[half + 1:]) / len(old[half + 1:])
@@ -183,13 +199,14 @@ class SamePassSameAnswer(unittest.TestCase):
                                 progress=lambda _r: None)
         self.assertEqual(quiet[1], noisy[1])   # 動き
         self.assertEqual(quiet[2], noisy[2])   # 音量
+        self.assertEqual(quiet[3], noisy[3])   # 発話らしさ用の細かい音量
         for key in ("freeze_start", "silence_start"):
             self.assertEqual(key in quiet[0], key in noisy[0])
 
     def test_detection_events_are_reported(self):
         video, audio = detection_filters(AnalyzeParams(), has_audio=True)
         with tempfile.TemporaryDirectory() as tmp:
-            stderr, _motion, _loudness = measure_all(
+            stderr, _motion, _loudness, _speech = measure_all(
                 self.source, detect_video=video, detect_audio=audio,
                 has_audio=True, out_dir=Path(tmp))
         # 前半は静止+無音なので、両方の検出が報告されるはず
@@ -205,11 +222,12 @@ class SamePassSameAnswer(unittest.TestCase):
                  "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent)],
                 check=True, capture_output=True)
             video, audio = detection_filters(AnalyzeParams(), has_audio=False)
-            _stderr, motion, loudness = measure_all(
+            _stderr, motion, loudness, speech = measure_all(
                 silent, detect_video=video, detect_audio=audio,
                 has_audio=False, out_dir=Path(tmp))
             self.assertTrue(motion)
             self.assertEqual(loudness, [])
+            self.assertEqual(speech, [])
 
     def test_single_pass_is_faster(self):
         video, audio = detection_filters(AnalyzeParams(), has_audio=True)
